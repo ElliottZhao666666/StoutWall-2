@@ -1,0 +1,18 @@
+# Visual Studio and compiler outputs
+.vs/
+bin/
+obj/
+Debug/
+Release/
+*.user
+*.suo
+*.pdb
+*.ilk
+*.obj
+
+# Test data and local runtime material
+test-data/
+runtime/
+local.settings.json
+*.DDT
+*.EDT
