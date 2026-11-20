@@ -32,6 +32,7 @@ constexpr int kTickOperation = 11;
 constexpr int kRestartClockOperation = 12;
 constexpr int kAutoSaveOperation = 13;
 constexpr int kClearFavoritesOperation = 14;
+constexpr int kReshuffleOperation = 15;
 constexpr int kShutdownOperation = 3;
 constexpr int kSourceOperation = 4;
 constexpr int kRelocateOperation = 5;
@@ -418,6 +419,7 @@ struct ProductUi::State {
             request.action==ProductAction::Tick?kTickOperation:
             request.action==ProductAction::AutoSave?kAutoSaveOperation:
             request.action==ProductAction::ClearFavorites?kClearFavoritesOperation:
+            request.action==ProductAction::Reshuffle?kReshuffleOperation:
             (request.action==ProductAction::ChangeFrequency||request.action==ProductAction::Pause||
              request.action==ProductAction::ChangeMode)?kRestartClockOperation:kActionOperation;
         return runner.Submit(operation, [this, request, operation]() {
@@ -783,7 +785,8 @@ struct ProductUi::State {
             L"\r\n自动保存："+(config.autoSave?L"已打开":L"已关闭"));
         if (!snapshot.image.empty()) ui->SetImage(kMainWindow,L"图片框EX1",snapshot.image);
         ui->SetChecked(L"_启动窗口", L"选择框EX1", config.autoSave != 0);
-        ui->SetChecked(L"_启动窗口", L"选择框EX2", config.changeRandom != 0);
+        ui->SetChecked(L"_启动窗口", L"选择框EX2",
+            config.mode != SWP_FAVORITES && config.changeRandom != 0);
         ui->SetChecked(L"_启动窗口", L"选择框EX3", snapshot.autoRunPreference);
         ui->SetChecked(L"_启动窗口", L"单选框EX1", config.mode == SWP_DAILY);
         ui->SetChecked(L"_启动窗口", L"单选框EX2", config.mode == SWP_GALLERY);
@@ -795,7 +798,8 @@ struct ProductUi::State {
         ui->SetEnabled(kMainWindow,L"图片按钮EX2",canStep);
         ui->SetEnabled(kMainWindow,L"图片按钮EX4",!closing&&snapshot.hasCurrent);
         ui->SetEnabled(L"_启动窗口", L"图片按钮EX5", !closing);
-        ui->SetEnabled(kMainWindow,L"按钮EX9",config.changeRandom&&config.mode!=SWP_DAILY);
+        ui->SetEnabled(kMainWindow,L"按钮EX9",
+            config.mode==SWP_DAILY||config.mode==SWP_FAVORITES||!config.changeRandom);
         UpdateGalleryUi();
     }
 
@@ -1245,6 +1249,9 @@ struct ProductUi::State {
             auto value = std::static_pointer_cast<ProductSnapshot>(result->payload);
             UpdateUi(*value);
             if(result->operation==kRestartClockOperation) ScheduleNextTick(snapshot.intervalMs);
+            if(!closing&&result->operation==kReshuffleOperation)
+                MessageBoxW(DialogOwner(ui->MainWindow()),L"已重新指定壁纸随机更换顺序！",L"重置随机顺序",
+                            MB_OK|MB_ICONINFORMATION);
             if(!closing&&result->operation==kClearFavoritesOperation)
                 MessageBoxW(DialogOwner(ui->MainWindow()),L"已将所有原来收藏的壁纸取消收藏！",L"清空收藏",MB_OK|MB_ICONINFORMATION);
             if(!closing&&result->operation==kAutoSaveOperation&&snapshot.config.autoSave&&!options.testMode)

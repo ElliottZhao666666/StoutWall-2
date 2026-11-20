@@ -2,6 +2,7 @@
 #define NOMINMAX
 
 #include "ProductBackend.hpp"
+#include "SequenceRandom.hpp"
 
 #include <windows.h>
 
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -289,11 +291,36 @@ void CheckMetadataDates() {
     std::wcout << L"PASS: metadata date validation, including century leap-year rules.\n";
 }
 
+void CheckLegacyRandomSequence() {
+    std::mt19937 engine(0x5a17u);
+    const auto sequence = stoutwall::BuildRandomSequenceIndices(3, 64, engine);
+    Require(sequence.size() == 64, "legacy random sequence length changed");
+    bool seen[3] = {};
+    bool repeated = false;
+    for (size_t i = 0; i < sequence.size(); ++i) {
+        Require(sequence[i] < 3, "legacy random sequence selected an invalid record");
+        if (i) Require(sequence[i] != sequence[i - 1], "legacy random sequence repeated adjacent records");
+        if (seen[sequence[i]]) repeated = true;
+        seen[sequence[i]] = true;
+    }
+    Require(repeated, "legacy random sampling unexpectedly became a no-repeat permutation");
+    std::mt19937 pinnedEngine(0x62b1u);
+    const auto pinned = stoutwall::BuildRandomSequenceIndices(5, 32, pinnedEngine, 17, 3);
+    Require(pinned.size() == 32 && pinned[17] == 3, "random sequence failed to retain its pinned current record");
+    for (size_t i = 1; i < pinned.size(); ++i)
+        Require(pinned[i] != pinned[i - 1], "pinned random sequence repeated adjacent records");
+    std::mt19937 singleEngine(7);
+    const auto single = stoutwall::BuildRandomSequenceIndices(1, 1, singleEngine);
+    Require(single.size() == 1 && single.front() == 0, "single-record random sequence must terminate safely");
+    std::wcout << L"PASS: original random sampling allows non-adjacent repeats and rejects adjacent repeats.\n";
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     try {
         CheckMetadataDates();
+        CheckLegacyRandomSequence();
         const fs::path runtime = fs::absolute(Argument(argc, argv, L"--runtime"));
         const fs::path fixture = fs::absolute(Argument(argc, argv, L"--fixture"));
         const fs::path root = fs::absolute(Argument(argc, argv, L"--root"));
@@ -317,6 +344,10 @@ int wmain(int argc, wchar_t** argv) {
             Require(!snapshot.autoRunPreference, "test started with AutoRun preference enabled");
             Require(!snapshot.hasCurrent, "daily test mode unexpectedly applied a wallpaper");
             const std::wstring firstDate = Date(snapshot.records.front());
+            snapshot = Run(backend, stoutwall::ProductAction::Reshuffle);
+            Require(snapshot.config.mode == SWP_DAILY && snapshot.config.changeRandom == 0 &&
+                        !snapshot.hasCurrent,
+                    "daily test-mode reshuffle must skip network refresh and preserve random preference");
 
             snapshot = Run(backend, stoutwall::ProductAction::ChangeMode, SWP_GALLERY);
             Require(snapshot.config.mode == SWP_GALLERY && snapshot.hasCurrent,
@@ -345,8 +376,34 @@ int wmain(int argc, wchar_t** argv) {
             Require(snapshot.config.changeRandom != 0, "random mode was not enabled");
             snapshot = Run(backend, stoutwall::ProductAction::Reshuffle);
             Require(snapshot.config.changeRandom != 0, "reshuffle cleared random mode");
+            const std::wstring randomCurrentDate = Date(snapshot.current);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseSelect, 0, firstDate);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseFavorite);
+            Require(Date(snapshot.current) == randomCurrentDate,
+                    "changing a browse favorite unexpectedly changed the current wallpaper");
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseFavorite);
+            Require(Date(snapshot.current) == randomCurrentDate,
+                    "restoring a browse favorite unexpectedly changed the current wallpaper");
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseSelect, 0, firstDate);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseApply);
+            Require(Date(snapshot.current) == firstDate,
+                    "applying a selected record failed while random mode was active");
+            snapshot = Run(backend, stoutwall::ProductAction::Next);
+            Require(snapshot.hasCurrent, "random sequence lost current wallpaper after applying a browse selection");
             snapshot = Run(backend, stoutwall::ProductAction::Random, 0);
             Require(snapshot.config.changeRandom == 0, "random mode was not disabled");
+            snapshot = Run(backend, stoutwall::ProductAction::Reshuffle);
+            Require(snapshot.config.changeRandom == 0, "reshuffle changed the disabled random-mode preference");
+
+            snapshot = Run(backend, stoutwall::ProductAction::ClearFavorites);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseSelect, 0, firstDate);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseFavorite);
+            snapshot = Run(backend, stoutwall::ProductAction::ChangeMode, SWP_FAVORITES);
+            Require(snapshot.config.mode == SWP_FAVORITES && snapshot.hasCurrent && Date(snapshot.current) == firstDate,
+                    "single-favorite mode setup failed");
+            snapshot = Run(backend, stoutwall::ProductAction::Favorite);
+            Require(snapshot.config.mode == SWP_GALLERY && snapshot.hasCurrent && Date(snapshot.current) == firstDate,
+                    "removing the last favorite did not safely return to gallery mode");
 
             const bool currentFavoriteBefore = snapshot.current.favorite != 0;
             snapshot = Run(backend, stoutwall::ProductAction::Favorite);
@@ -355,6 +412,9 @@ int wmain(int argc, wchar_t** argv) {
             snapshot = Run(backend, stoutwall::ProductAction::Favorite);
             Require(snapshot.hasCurrent && (snapshot.current.favorite != 0) == currentFavoriteBefore,
                     "current wallpaper favorite toggle did not restore state");
+            snapshot = Run(backend, stoutwall::ProductAction::ClearFavorites);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseSelect, 0, firstDate);
+            snapshot = Run(backend, stoutwall::ProductAction::BrowseFavorite);
             snapshot = Run(backend, stoutwall::ProductAction::BrowseFilter, 1);
             Require(!snapshot.records.empty() &&
                         std::all_of(snapshot.records.begin(), snapshot.records.end(),

@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "ProductBackend.hpp"
+#include "SequenceRandom.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -359,12 +360,30 @@ struct ProductBackend::Impl {
         return bytes;
     }
 
-    std::vector<SWL_Record> BuildSequence(DWORD mode) {
+    std::vector<SWL_Record> BuildSequence(DWORD mode, const std::wstring& pinnedDate = {}) {
         std::vector<SWL_Record> result;
         if (mode == SWP_DAILY) return result;
         for (const auto& record : allRecords)
             if (mode != SWP_FAVORITES || record.favorite) result.push_back(record);
-        if (config.changeRandom) std::shuffle(result.begin(), result.end(), random);
+        if (config.changeRandom && mode == SWP_GALLERY) {
+            size_t pinnedPosition = static_cast<size_t>(-1);
+            size_t pinnedIndex = static_cast<size_t>(-1);
+            if (!pinnedDate.empty()) {
+                const auto found = std::find_if(result.begin(), result.end(), [&](const SWL_Record& record) {
+                    return DateOf(record) == pinnedDate;
+                });
+                if (found != result.end()) {
+                    pinnedPosition = ChooseRandomSequenceIndex(result.size(), random);
+                    pinnedIndex = static_cast<size_t>(found - result.begin());
+                }
+            }
+            const auto indices = BuildRandomSequenceIndices(result.size(), result.size(), random,
+                                                            pinnedPosition, pinnedIndex);
+            std::vector<SWL_Record> sampled;
+            sampled.reserve(indices.size());
+            for (const size_t index : indices) sampled.push_back(result[index]);
+            result = std::move(sampled);
+        }
         return result;
     }
 
@@ -373,17 +392,37 @@ struct ProductBackend::Impl {
             return DateOf(r) == keep;
         });
         if (found != records.end()) return static_cast<size_t>(found - records.begin());
-        if (keep.empty() && config.changeRandom && !records.empty()) {
-            std::uniform_int_distribution<size_t> choose(0, records.size() - 1);
-            return choose(random);
-        }
         return config.renderPoint && config.renderPoint <= records.size() ? config.renderPoint - 1 : 0;
     }
 
     void RebuildSequence() {
-        sequence = BuildSequence(config.mode);
-        sequencePosition = SequenceStart(sequence, hasCurrent ? DateOf(current) : std::wstring());
-        if (config.mode != SWP_DAILY) config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
+        const std::wstring keep = hasCurrent ? DateOf(current) : std::wstring();
+        DWORD rebuiltMode = config.mode;
+        auto rebuilt = BuildSequence(rebuiltMode, config.changeRandom && rebuiltMode == SWP_GALLERY ? keep : std::wstring());
+        if (rebuiltMode == SWP_FAVORITES && rebuilt.empty() && !allRecords.empty()) {
+            rebuiltMode = SWP_GALLERY;
+            rebuilt = BuildSequence(rebuiltMode, config.changeRandom ? keep : std::wstring());
+        }
+        if (rebuiltMode == SWP_DAILY || rebuilt.empty()) {
+            sequence = std::move(rebuilt);
+            sequencePosition = 0;
+            if (rebuiltMode != SWP_DAILY) config.renderPoint = 1;
+            return;
+        }
+        const auto found = std::find_if(rebuilt.begin(), rebuilt.end(), [&](const SWL_Record& record) {
+            return DateOf(record) == keep;
+        });
+        if (found != rebuilt.end()) sequencePosition = static_cast<size_t>(found - rebuilt.begin());
+        else if (config.changeRandom && rebuiltMode == SWP_GALLERY)
+            sequencePosition = ChooseRandomSequenceIndex(rebuilt.size(), random);
+        else sequencePosition = SequenceStart(rebuilt, {});
+        if (hasCurrent && !keep.empty() && found == rebuilt.end())
+            ApplySequenceRecord(rebuilt[sequencePosition], sequencePosition, rebuiltMode);
+        else {
+            config.mode = rebuiltMode;
+            config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
+        }
+        sequence = std::move(rebuilt);
     }
 
     const wchar_t* EmptyModeMessage(DWORD mode) const {
@@ -453,11 +492,28 @@ struct ProductBackend::Impl {
     }
 
     bool SelectGalleryMode(DWORD mode, const std::wstring& date = {}) {
-        auto next = BuildSequence(mode);
+        auto next = !date.empty() && config.mode == mode && !sequence.empty()
+            ? sequence : BuildSequence(mode);
         if (next.empty()) return false;
-        const size_t position = SequenceStart(next, date.empty() && hasCurrent ? DateOf(current) : date);
-        if (!date.empty() && DateOf(next[position]) != date)
-            Fail(L"Selected record is not available in the gallery sequence");
+        size_t position = 0;
+        if (!date.empty()) {
+            const auto found = std::find_if(next.begin(), next.end(), [&](const SWL_Record& record) {
+                return DateOf(record) == date;
+            });
+            position = found == next.end() ? SequenceStart(next, date) : static_cast<size_t>(found - next.begin());
+        } else if (config.changeRandom && mode == SWP_GALLERY) {
+            position = ChooseRandomSequenceIndex(next.size(), random);
+        } else {
+            position = SequenceStart(next, hasCurrent && config.mode == mode ? DateOf(current) : std::wstring());
+        }
+        if (!date.empty()) {
+            bool found = false;
+            const SWL_Record selectedRecord = FindRecord(date, found);
+            if (!found) Fail(L"Selected record is not available in the gallery");
+            if (config.mode == mode && !sequence.empty() && sequencePosition < next.size())
+                position = sequencePosition;
+            next[position] = selectedRecord;
+        }
         ApplySequenceRecord(next[position], position, mode);
         sequence = std::move(next);
         return true;
@@ -577,7 +633,6 @@ struct ProductBackend::Impl {
         const bool atCurrent = hasCurrent && DateOf(sequence[sequencePosition]) == DateOf(current);
         if (atCurrent && direction > 0 && sequencePosition + 1 == sequence.size() && config.changeRandom) {
             auto next = BuildSequence(config.mode);
-            if (DateOf(next.front()) == DateOf(current)) std::swap(next.front(), next.back());
             ApplySequenceRecord(next.front(), 0, config.mode);
             sequence = std::move(next);
         } else {
@@ -753,7 +808,7 @@ struct ProductBackend::Impl {
             LoadRecords(); record = FindRecord(Get(current.date), found);
             current.favorite = record.favorite; config.currentWall.favorite = static_cast<DWORD>(record.favorite);
             if (hasSelected && selectedDate == Get(record.date)) RefreshSelectedImage();
-            RebuildSequence(); UpdateBrowseSelection(); SaveConfig();
+            RebuildSequence(); UpdateBrowseSelection(); UpdateInterval(); SaveConfig();
             message = record.favorite ? L"Wallpaper added to favorites" : L"Wallpaper removed from favorites";
             break;
         }
@@ -825,15 +880,24 @@ struct ProductBackend::Impl {
             break;
         case ProductAction::Random:
             if (request.value != 0 && request.value != 1) Fail(L"Random value must be 0 or 1");
-            config.changeRandom = static_cast<DWORD>(request.value); RebuildSequence();
+            config.changeRandom = static_cast<DWORD>(request.value);
+            if (config.mode != SWP_DAILY) SelectGalleryMode(config.mode);
+            else RebuildSequence();
             SaveConfig(); message = config.changeRandom ? L"Random sequence enabled" : L"Original gallery order restored"; break;
         case ProductAction::Pause:
             if (request.value != 0 && request.value != 1) Fail(L"Pause value must be 0 or 1");
             config.paused = static_cast<DWORD>(request.value); UpdateInterval(); SaveConfig();
             message = config.paused ? L"Automatic changes paused" : L"Automatic changes resumed"; break;
         case ProductAction::Reshuffle:
-            config.changeRandom = 1; RebuildSequence();
-            UpdateInterval(); SaveConfig(); message = L"Wallpaper sequence reshuffled"; break;
+            if (config.mode == SWP_DAILY) {
+                if (testMode) message = L"Test mode: daily refresh skipped";
+                else Refresh(message);
+            } else {
+                SelectGalleryMode(config.mode);
+                UpdateInterval(); SaveConfig();
+                message = L"Wallpaper sequence reshuffled";
+            }
+            break;
         case ProductAction::BrowseSelect: {
             if (!request.text.empty()) SelectBrowse(request.text);
             else {
@@ -857,7 +921,7 @@ struct ProductBackend::Impl {
                 current.favorite = selected.favorite;
                 config.currentWall.favorite = static_cast<DWORD>(selected.favorite);
             }
-            RefreshSelectedImage(); RebuildSequence(); SaveConfig();
+            RefreshSelectedImage(); RebuildSequence(); UpdateInterval(); SaveConfig();
             message = selected.favorite ? L"Preview added to favorites" : L"Preview removed from favorites";
             break;
         }
