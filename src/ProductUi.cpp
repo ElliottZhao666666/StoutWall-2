@@ -28,6 +28,10 @@ constexpr int kInitializeOperation = 1;
 constexpr int kActionOperation = 2;
 constexpr int kThemeOperation = 9;
 constexpr int kStoreOperation = 10;
+constexpr int kTickOperation = 11;
+constexpr int kRestartClockOperation = 12;
+constexpr int kAutoSaveOperation = 13;
+constexpr int kClearFavoritesOperation = 14;
 constexpr int kShutdownOperation = 3;
 constexpr int kSourceOperation = 4;
 constexpr int kRelocateOperation = 5;
@@ -382,7 +386,12 @@ struct ProductUi::State {
     bool SubmitAction(ProductRequest request) {
         if (closing || !initialized) return false;
         const int operation=request.action==ProductAction::ExportTheme?kThemeOperation:
-            request.action==ProductAction::StoreLatest?kStoreOperation:kActionOperation;
+            request.action==ProductAction::StoreLatest?kStoreOperation:
+            request.action==ProductAction::Tick?kTickOperation:
+            request.action==ProductAction::AutoSave?kAutoSaveOperation:
+            request.action==ProductAction::ClearFavorites?kClearFavoritesOperation:
+            (request.action==ProductAction::ChangeFrequency||request.action==ProductAction::Pause||
+             request.action==ProductAction::ChangeMode)?kRestartClockOperation:kActionOperation;
         return runner.Submit(operation, [this, request, operation]() {
             return Result(operation, backend->Execute(request));
         }) != 0;
@@ -729,6 +738,7 @@ struct ProductUi::State {
     }
 
     void UpdateUi(const ProductSnapshot& value) {
+        if(snapshot.intervalMs!=value.intervalMs) ScheduleNextTick(value.intervalMs);
         snapshot = value;
         const auto& config = snapshot.config;
         ui->SetText(L"_启动窗口", L"标签EX1", snapshot.hasCurrent ? BoundedText(snapshot.current.title, _countof(snapshot.current.title)) : L"");
@@ -830,6 +840,11 @@ struct ProductUi::State {
         ui->SetImage(kViewerWindow,L"图片框EX1",bytes);
     }
 
+    void SetViewerMode(ReplicaUi::ImageMode mode) {
+        viewerMode=mode;
+        ui->SetImageMode(kViewerWindow,L"图片框EX1",mode);
+    }
+
     void HandleViewerEvent(const UiEvent& event) {
         if(event.control==L"超级按钮EX1"&&event.notification==BN_CLICKED) {ui->Close(kViewerWindow);return;}
         if(event.control!=L"图片框EX1"||event.notification!=WM_CONTEXTMENU)return;
@@ -841,10 +856,7 @@ struct ProductUi::State {
         AppendMenuW(menu,MF_STRING,5,L"点击屏幕中间上方的X关闭大图");
         const UINT command=ChooseMenu(menu,ui->WindowHandle(kViewerWindow));
         if(command==5)ui->Close(kViewerWindow);
-        else if(command>0&&command<5) {
-            viewerMode=static_cast<ReplicaUi::ImageMode>(command-1);
-            ui->SetImageMode(kViewerWindow,L"图片框EX1",viewerMode);
-        }
+        else if(command>0&&command<5) SetViewerMode(static_cast<ReplicaUi::ImageMode>(command-1));
     }
 
     void HandleIosEvent(const UiEvent& event) {
@@ -1042,8 +1054,18 @@ struct ProductUi::State {
             else if (event.control == L"图片框EX3") OpenPage(ui->MainWindow(),L"https://joy.link/yuebanjun");
             else if (event.control == L"图片框EX4") OpenPage(ui->MainWindow(),L"https://space.bilibili.com/306479391");
             else if (event.control == L"图片框EX5") OpenPage(ui->MainWindow(),L"https://www.ybjun.com");
-            else if (event.control == L"按钮EX5"&&MessageBoxW(ui->MainWindow(),L"清除壁纸库中的所有收藏？",L"清除所有收藏",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)==IDYES)
-                SubmitAction(Request(ProductAction::ClearFavorites));
+            else if (event.control == L"按钮EX5") {
+                const HWND owner=ui->MainWindow();
+                if(!snapshot.favorites) {
+                    MessageBoxW(owner,L"壁纸库内没有已收藏的壁纸，无需清空啦！",L"清空收藏",MB_OK|MB_ICONERROR);
+                    return;
+                }
+                if(MessageBoxW(owner,L"确定要清空所有收藏的壁纸吗？该操作会将所有已收藏壁纸的收藏状态清空，但不会从壁纸库删除这些壁纸。本操作无法恢复！请谨慎操作！",
+                    L"清空收藏",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)==IDYES&&
+                    MessageBoxW(owner,L"再次确认！您将要执行清空所有收藏壁纸的操作。再次提醒，请您谨慎操作！如果确定要清空，请点击下面的【否】按钮。",
+                        L"清空收藏[二次确认]",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)==IDNO)
+                    SubmitAction(Request(ProductAction::ClearFavorites));
+            }
             else if (event.control == L"图片按钮EX3") OpenPage(ui->MainWindow(),snapshot.current.link);
             else if (event.control == L"图片按钮EX1") SubmitAction(Request(ProductAction::Previous));
             else if (event.control == L"图片按钮EX2") SubmitAction(Request(ProductAction::Next));
@@ -1134,9 +1156,14 @@ struct ProductUi::State {
 
     bool HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
         constexpr UINT kUiTestSelectTab = WM_APP + 0x51;
+        constexpr UINT kUiTestViewerMode = WM_APP + 0x52;
         if (options.uiTest && message == kUiTestSelectTab) {
             const int page = static_cast<int>(wParam);
             if (page >= 0 && page < 5) ui->SetSelection(kMainWindow, L"选择夹EX1", page);
+            return true;
+        }
+        if(options.uiTest&&message==kUiTestViewerMode) {
+            if(wParam<4&&ui->WindowHandle(kViewerWindow))SetViewerMode(static_cast<ReplicaUi::ImageMode>(wParam));
             return true;
         }
         if(taskbarCreated&&message==taskbarCreated){AddTray();return true;}
@@ -1146,15 +1173,17 @@ struct ProductUi::State {
             return true;
         }
         if (message == WM_TIMER && wParam == kClockTimer) {
-            if (initialized && !closing && snapshot.intervalMs && GetTickCount64() >= nextTick) {
-                SubmitAction(Request(ProductAction::Tick));
-                nextTick = GetTickCount64() + snapshot.intervalMs;
-            }
+            if (initialized && !closing && !tickPending && nextTick && GetTickCount64() >= nextTick)
+                tickPending=SubmitAction(Request(ProductAction::Tick));
             return true;
         }
         if (message != WM_STOUTWALL_TASK_DONE) return false;
         std::unique_ptr<TaskResult> result(reinterpret_cast<TaskResult*>(lParam));
         if (!result) return true;
+        if(result->operation==kTickOperation) {
+            tickPending=false;
+            ScheduleNextTick(snapshot.intervalMs);
+        }
         if (HandleAuxiliaryResult(*result)) return true;
         if (result->operation == kThemeOperation) {
             themeBusy=false;
@@ -1183,9 +1212,14 @@ struct ProductUi::State {
         if (result->payload) {
             auto value = std::static_pointer_cast<ProductSnapshot>(result->payload);
             UpdateUi(*value);
+            if(result->operation==kRestartClockOperation) ScheduleNextTick(snapshot.intervalMs);
+            if(!closing&&result->operation==kClearFavoritesOperation)
+                MessageBoxW(DialogOwner(ui->MainWindow()),L"已将所有原来收藏的壁纸取消收藏！",L"清空收藏",MB_OK|MB_ICONINFORMATION);
+            if(!closing&&result->operation==kAutoSaveOperation&&snapshot.config.autoSave&&!options.testMode)
+                MessageBoxW(DialogOwner(ui->MainWindow()),snapshot.status.c_str(),L"自动保存壁纸",MB_OK|MB_ICONINFORMATION);
             if (result->operation == kInitializeOperation) {
                 initialized = true;
-                nextTick = GetTickCount64() + (snapshot.intervalMs ? snapshot.intervalMs : 60000);
+                ScheduleNextTick(snapshot.intervalMs);
                 if (closing) BeginClose();
             } else if (result->operation == kShutdownOperation) {
                 FinishClose();
@@ -1194,7 +1228,9 @@ struct ProductUi::State {
         return true;
     }
 
-    ULONGLONG nextTick = 0;
+    void ScheduleNextTick(DWORD interval) { nextTick=interval?GetTickCount64()+interval:0; }
+    ULONGLONG nextTick=0;
+    bool tickPending=false;
 
     int Run(int showCommand) {
         const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

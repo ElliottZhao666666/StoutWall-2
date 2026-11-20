@@ -25,7 +25,8 @@ startup controls or apply a desktop wallpaper.
 param(
     [Parameter(Mandatory)] [string] $GalleryFixture,
     [string] $TempParent = [IO.Path]::GetTempPath(),
-    [ValidateRange(5, 120)] [int] $TimeoutSeconds = 25
+    [ValidateRange(5, 120)] [int] $TimeoutSeconds = 25,
+    [switch] $FocusedClearFavorites
 )
 
 Set-StrictMode -Version Latest
@@ -99,6 +100,15 @@ namespace StoutWallVerification {
         [DllImport("user32.dll", EntryPoint="SendMessageTimeoutW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] static extern IntPtr SendText(IntPtr h, uint m, IntPtr w, StringBuilder l, uint flags, uint timeout, out IntPtr result);
         [DllImport("user32.dll", ExactSpelling=true)] static extern int GetWindowLongW(IntPtr h, int index);
         [DllImport("user32.dll", ExactSpelling=true)] static extern IntPtr GetParent(IntPtr h);
+        [StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+        [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out Rect r);
+        [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+        [DllImport("user32.dll")] static extern bool InvalidateRect(IntPtr h, IntPtr rect, bool erase);
+        [DllImport("user32.dll")] static extern bool UpdateWindow(IntPtr h);
+        [DllImport("user32.dll")] static extern uint GetSysColor(int index);
+        [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+        [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr dc, int x, int y);
 
         static Exception Failed(string step) { return new Win32Exception(Marshal.GetLastWin32Error(), step); }
 
@@ -172,6 +182,15 @@ namespace StoutWallVerification {
         public bool Alive(IntPtr h) { return Owns(h); }
         public int ControlId(IntPtr h) { Check(h); return GetDlgCtrlID(h); }
         public IntPtr Owner(IntPtr h) { Check(h); return GetWindow(h, 4); } // GW_OWNER
+        public string VisibleWindowSummary() {
+            var lines = new List<string>();
+            foreach (var h in Windows(IntPtr.Zero)) {
+                if (!Visible(h)) continue;
+                lines.Add(String.Format("{0:X} '{1}' class='{2}' owner={3:X} enabled={4}",
+                    h.ToInt64(), Title(h), Class(h), Owner(h).ToInt64(), Enabled(h)));
+            }
+            return String.Join(" | ", lines.ToArray());
+        }
         public string Class(IntPtr h) {
             Check(h);
             var text = new StringBuilder(128);
@@ -210,6 +229,35 @@ namespace StoutWallVerification {
                 throw new InvalidOperationException("Expected visible preview control");
             // Deliver the same STN_CLICKED notification as the Static control.
             Post(GetParent(preview), 0x0111, ControlId(preview), preview); // STN_CLICKED = 0
+        }
+        public uint WindowBackground() { return GetSysColor(5); }
+        public int[] ImageBounds(IntPtr image) {
+            Check(image);
+            var old = SetThreadDpiAwarenessContext(new IntPtr(-2)); // system aware, like StoutWall
+            try {
+                Rect r;
+                if (!GetClientRect(image, out r)) throw Failed("GetClientRect");
+                return new[] { r.Right, r.Bottom };
+            } finally { if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old); }
+        }
+        public void SelectViewerMode(IntPtr viewer, int mode) {
+            if (Title(viewer) != "查看大图" || mode < 0 || mode > 3) throw new InvalidOperationException("Invalid viewer or image mode");
+            Send(viewer, 0x8000 + 0x52, mode, IntPtr.Zero);
+        }
+        public uint[] ImagePixels(IntPtr image, int[] points) {
+            if (!Visible(image) || !IsImageControl(image)) throw new InvalidOperationException("Expected visible owner-draw image");
+            InvalidateRect(image, IntPtr.Zero, false);
+            UpdateWindow(image);
+            var dc = GetDC(image);
+            if (dc == IntPtr.Zero) throw Failed("GetDC");
+            try {
+                var values = new uint[points.Length / 2];
+                for (int i = 0; i < values.Length; i++) {
+                    values[i] = GetPixel(dc, points[i * 2], points[i * 2 + 1]);
+                    if (values[i] == uint.MaxValue) throw new InvalidOperationException("Viewer pixel not visible");
+                }
+                return values;
+            } finally { ReleaseDC(image, dc); }
         }
         public void SetEdit(IntPtr edit, string value) {
             if (!Visible(edit) || !Enabled(edit) || !Class(edit).Equals("Edit", StringComparison.OrdinalIgnoreCase))
@@ -255,6 +303,17 @@ namespace StoutWallVerification {
             if (Class(dialog) != "#32770" || !Visible(button) || !Enabled(button) || ControlId(button) != 6)
                 throw new InvalidOperationException("Exit dialog Yes button not available");
             Post(dialog, 0x0111, 6, button); // WM_COMMAND, IDYES, BN_CLICKED
+        }
+        public void AnswerFavoriteDialog(IntPtr dialog, IntPtr owner, string title, int answer) {
+            if (!Visible(dialog) || Class(dialog) != "#32770" || Owner(dialog) != owner || Title(dialog) != title ||
+                (title != "清空收藏" && title != "清空收藏[二次确认]") || (answer != 1 && answer != 6 && answer != 7))
+                throw new InvalidOperationException("Unexpected clear-favorites dialog or answer");
+            Post(dialog, 0x0111, answer, IntPtr.Zero); // IDOK, IDYES or IDNO
+        }
+        public void CloseFavoriteNotice(IntPtr dialog, IntPtr owner, string title) {
+            if (!Visible(dialog) || Class(dialog) != "#32770" || Owner(dialog) != owner || title != "清空收藏" || Title(dialog) != title)
+                throw new InvalidOperationException("Unexpected clear-favorites notice");
+            Post(dialog, 0x0010, 0, IntPtr.Zero); // WM_CLOSE for the informational notice only
         }
         public void CloseThemeResult(IntPtr dialog, IntPtr theme, string title) {
             if (Class(dialog) != "#32770" || Owner(dialog) != theme || Title(dialog) != title || !Visible(dialog))
@@ -443,22 +502,62 @@ function Test-SevenDayUnavailable {
 }
 
 function Test-GalleryViewer([IntPtr] $Gallery) {
+    $size = @($session.Windows($Gallery) | Where-Object {
+        $session.Class($_) -eq 'ComboBox' -and $session.ComboItemIndex($_, '(4:3)1024x768') -ge 0
+    })
+    Assert-That ($size.Count -eq 1) 'Expected one gallery size selector.'
+    $session.SelectComboItem($size[0], '(4:3)1024x768')
     $preview = Find-Control $Gallery Static -Visible
     Assert-That ([bool] $preview) 'Gallery preview not found.'
     for ($opening = 1; $opening -le 2; $opening++) {
         Assert-That (@(Get-TestWindow '查看大图').Count -eq 0) 'Viewer was already open before the preview click.'
-        $session.ClickPreview($preview)
         $viewer = Wait-For "gallery viewer on opening $opening" {
             $found = @(Get-TestWindow '查看大图')
             Assert-That ($found.Count -le 1) 'Multiple viewer windows.'
             if ($found.Count -eq 1) { $found[0] }
+            else { $session.ClickPreview($preview) }
         }
-        $null = Wait-For 'viewer image control' { Find-Control $viewer Static -Visible }
-        Assert-That ($session.Owner($viewer) -eq $Gallery -and !$session.Enabled($Gallery) -and !$session.Enabled($main)) 'Viewer did not preserve the nested modal chain.'
-        Close-Child $viewer '查看大图'
+        try {
+            $image = Wait-For 'viewer image control' { Find-Control $viewer Static -Visible }
+            Assert-That ($session.Owner($viewer) -eq $Gallery -and !$session.Enabled($Gallery) -and !$session.Enabled($main)) 'Viewer did not preserve the nested modal chain.'
+            if ($opening -eq 1) { Test-ViewerPixels $viewer $image }
+        } finally { Close-Child $viewer '查看大图' }
         Assert-That (!$session.Enabled($main)) 'Main window unlocked while the gallery was still open.'
     }
     Write-Host 'PASS: Gallery preview click opens and reopens the viewer.'
+}
+
+function Test-ViewerPixels([IntPtr] $Viewer, [IntPtr] $Image) {
+    $width, $height = $session.ImageBounds($Image)
+    if ($width -lt 1100 -or $height -lt 800 -or $width / $height -lt 1.45) {
+        Write-Host 'SKIP: Viewer pixel geometry requires a display at least 1100x800 and wider than 4:3.'
+        return
+    }
+    $background = $session.WindowBackground()
+    $midX = [int]($width / 2)
+    $midY = [int]($height / 2)
+    $side = [int](($width - $height * 4 / 3) / 4)
+    $points = @($side, $midY, $midX, ($height - 8), $midX, $midY, 35, 123, 1059, 123)
+    $null = Wait-For 'Fit to letterbox the 4:3 wallpaper horizontally' {
+        $fit = $session.ImagePixels($Image, $points)
+        $fit[0] -eq $background -and $fit[1] -ne $background -and $fit[2] -ne $background
+    }
+    $session.SelectViewerMode($Viewer, 1)
+    $null = Wait-For 'Center to preserve the native 1024x768 dimensions' {
+        $center = $session.ImagePixels($Image, $points)
+        $center[0] -eq $background -and $center[1] -eq $background -and $center[2] -ne $background
+    }
+    $session.SelectViewerMode($Viewer, 2)
+    $null = Wait-For 'Tile to repeat the same pixel exactly 1024 pixels later' {
+        $tile = $session.ImagePixels($Image, $points)
+        $tile[3] -ne $background -and $tile[3] -eq $tile[4]
+    }
+    $session.SelectViewerMode($Viewer, 3)
+    $null = Wait-For 'Stretch to fill the viewport without repeating' {
+        $stretch = $session.ImagePixels($Image, $points)
+        $stretch[0] -ne $background -and $stretch[1] -ne $background -and $stretch[3] -ne $stretch[4]
+    }
+    Write-Host ("PASS: Displayed pixels for fit, center, tile and stretch ({0}x{1})." -f $width, $height)
 }
 
 function Quit-Product {
@@ -480,6 +579,60 @@ function Quit-Product {
     $code = $session.ExitCode()
     Assert-That ($code -eq 0) "Product exited with code $code."
     Write-Host "PASS: Settings exit and confirmation; PID $($session.Id) exited with code 0."
+}
+
+function Test-ClearFavorites([int] $BeforeCount) {
+    function Answer-FavoritePrompt([string] $Title, [int] $Answer, [string] $ExpectedBody) {
+        $dialog = Wait-For "$Title prompt" {
+            foreach ($candidate in @(Get-TestWindow $Title '#32770')) {
+                try {
+                    if ($session.Owner($candidate) -ne $main) { continue }
+                    $matchesBody = @($session.Windows($candidate) | Where-Object {
+                        try { $session.Class($_) -eq 'Static' -and $session.Text($_).Contains($ExpectedBody) }
+                        catch { $false }
+                    })
+                    if ($matchesBody.Count -eq 1) { return $candidate }
+                } catch { continue }
+            }
+        }
+        $body = @($session.Windows($dialog) | Where-Object {
+            $session.Class($_) -eq 'Static' -and $session.Text($_).Contains($ExpectedBody)
+        })
+        Assert-That ($body.Count -eq 1) "Unexpected body for '$Title'."
+        if ($Answer -eq 1) { $session.CloseFavoriteNotice($dialog, $main, $Title) }
+        else { $session.AnswerFavoriteDialog($dialog, $main, $Title, $Answer) }
+    }
+    function Click-ClearFavorites {
+        $clear = Find-Control $main Button '清除所有收藏' -Visible
+        Assert-That ([bool]$clear) 'Clear-favorites button missing.'
+        $session.Click($clear, '清除所有收藏')
+    }
+    Select-Page 3
+    Click-ClearFavorites
+    Write-Host 'Clear favorites: cancelling first confirmation.'
+    Answer-FavoritePrompt '清空收藏' 6 '不会从壁纸库删除这些壁纸'
+    Write-Host 'Clear favorites: cancelling second confirmation.'
+    Answer-FavoritePrompt '清空收藏[二次确认]' 6 '请点击下面的【否】按钮'
+    $null = Wait-For 'main restored after cancelling second confirmation' { $session.Enabled($main) }
+    $cancelled = Open-LoadedGallery
+    Assert-That (($cancelled.Rows.Values -contains $true) -and $cancelled.Rows.Count -eq $BeforeCount) 'Cancelling the second confirmation altered the gallery.'
+    Close-Child $cancelled.Window '查看/管理壁纸库'
+    Click-ClearFavorites
+    Write-Host 'Clear favorites: confirming first prompt.'
+    Answer-FavoritePrompt '清空收藏' 6 '不会从壁纸库删除这些壁纸'
+    Write-Host 'Clear favorites: confirming second prompt.'
+    Answer-FavoritePrompt '清空收藏[二次确认]' 7 '请点击下面的【否】按钮'
+    Write-Host 'Clear favorites: dismissing success notice.'
+    Answer-FavoritePrompt '清空收藏' 1 '已将所有原来收藏的壁纸取消收藏'
+    try { $null = Wait-For 'main restored after clearing favorites' { $session.Enabled($main) } }
+    catch { throw "$_ Visible windows: $($session.VisibleWindowSummary())" }
+    Click-ClearFavorites
+    Write-Host 'Clear favorites: dismissing empty-library notice.'
+    Answer-FavoritePrompt '清空收藏' 1 '壁纸库内没有已收藏的壁纸'
+    $cleared = Open-LoadedGallery
+    Assert-That (($cleared.Rows.Values -notcontains $true) -and $cleared.Rows.Count -eq $BeforeCount) 'Clearing favorites removed records or left favorite marks.'
+    Close-Child $cleared.Window '查看/管理壁纸库'
+    Write-Host 'PASS: Clear-favorites cancel, two confirmations, zero-favorites prompt and intact gallery.'
 }
 
 function Read-Gallery([IntPtr] $List) {
@@ -760,7 +913,8 @@ try {
     $expected = $null
     $testedDate = $null
 
-    for ($run = 1; $run -le 2; $run++) {
+    $runCount = if ($FocusedClearFavorites) { 1 } else { 2 }
+    for ($run = 1; $run -le $runCount; $run++) {
         $session = $null
         $main = $null
         $markers = @()
@@ -784,7 +938,7 @@ try {
             Write-Host "PASS: Initial tab, titles and order (run $run)."
             Wait-ForGalleryLoad
 
-            if ($run -eq 1) {
+            if ($run -eq 1 -and !$FocusedClearFavorites) {
                 Test-SevenDayUnavailable
                 Select-Page 2
                 Test-ChildReopen '选择壁纸源...' '选择新壁纸获取来源...' Button '确定'
@@ -836,7 +990,11 @@ try {
             }
             Write-Host "PASS: Gallery favorite state for $testedDate (run $run)."
             Close-Child $gallery '查看/管理壁纸库'
+            if ($run -eq 2 -and $expected.Values -contains $true) { Test-ClearFavorites $expected.Count }
             if ($run -eq 1) {
+                if ($FocusedClearFavorites -and $expected.Values -contains $true) { Test-ClearFavorites $expected.Count }
+            }
+            if ($run -eq 1 -and !$FocusedClearFavorites) {
                 $reopened = Open-LoadedGallery
                 foreach ($date in $expected.Keys) {
                     Assert-That ($reopened.Rows.Contains($date) -and $reopened.Rows[$date] -eq $expected[$date]) "Unexpected favorite state on reopening the gallery for $date."
@@ -848,6 +1006,11 @@ try {
                 $session.SimulateTrayRestore($main)
                 $null = Wait-For 'main window restored by tray notification' { $session.Visible($main) -and $session.Enabled($main) }
                 Write-Host 'PASS: Main X hides to tray and the tray notification restores the same window.'
+            }
+            if ($FocusedClearFavorites) {
+                $exitAttempted = $true
+                Quit-Product
+                continue
             }
             $exitAttempted = $true
             Quit-Product

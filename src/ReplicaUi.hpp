@@ -65,6 +65,8 @@ private:
         std::wstring name;
         HWND hwnd=nullptr;
         HWND blockedOwner=nullptr;
+        POINT viewerCursor{};
+        BYTE viewerCloseOpacity=255;
         std::vector<Child> children;
         std::vector<HWND> subclassed;
     };
@@ -95,6 +97,7 @@ private:
     void OnCommand(HWND,UINT,UINT,HWND);
     void OnNotify(HWND,NMHDR*);
     void OnDrawItem(HWND,DRAWITEMSTRUCT*);
+    void OnViewerTimer(HWND);
     bool OnContextMenu(HWND,HWND,LPARAM);
     void OnClose(HWND);
     void OnNcDestroy(HWND);

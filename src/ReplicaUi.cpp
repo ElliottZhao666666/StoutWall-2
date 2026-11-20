@@ -16,6 +16,7 @@ namespace stoutwall {
 using Microsoft::WRL::ComPtr;
 namespace {
 constexpr wchar_t kClassName[]=L"StoutWallOriginalWindow";
+constexpr UINT_PTR kViewerCursorTimer=187;
 const WindowDef* Definition(const std::wstring& name) {
     for(const auto& w:OriginalWindows) if(name==w.name) return &w;
     return nullptr;
@@ -115,6 +116,10 @@ HWND ReplicaUi::CreateProductWindow(const wchar_t* rawName, HWND owner) {
             windows_.erase(it);
         }
         return nullptr;
+    }
+    if(fullscreen) {
+        GetCursorPos(&it->second.viewerCursor);
+        SetTimer(h,kViewerCursorTimer,800,nullptr);
     }
     return h;
 }
@@ -287,6 +292,7 @@ LRESULT CALLBACK ReplicaUi::WindowProc(HWND h,UINT m,WPARAM w,LPARAM l) {
         if(m==WM_NOTIFY){self->OnNotify(h,reinterpret_cast<NMHDR*>(l));return 0;}
         if(m==WM_CONTEXTMENU&&self->OnContextMenu(h,reinterpret_cast<HWND>(w),l))return 0;
         if(m==WM_DRAWITEM){self->OnDrawItem(h,reinterpret_cast<DRAWITEMSTRUCT*>(l));return TRUE;}
+        if(m==WM_TIMER&&w==kViewerCursorTimer){self->OnViewerTimer(h);return 0;}
         if(m==WM_ERASEBKGND) {
             auto* window=self->WindowFor(h);
             const auto* definition=window?Definition(window->name):nullptr;
@@ -334,6 +340,23 @@ void ReplicaUi::OnNotify(HWND hwnd,NMHDR* hdr) {
         return;
     }
 }
+void ReplicaUi::OnViewerTimer(HWND hwnd) {
+    auto* window=WindowFor(hwnd);
+    if(!window||window->name!=L"大图窗口")return;
+    auto* button=Find(hwnd,window->name,L"超级按钮EX1");
+    if(!button)return;
+    POINT current{};
+    RECT bounds{};
+    if(!GetCursorPos(&current)||!GetWindowRect(button->hwnd,&bounds))return;
+    const POINT previous=window->viewerCursor;
+    window->viewerCursor=current;
+    const BYTE opacity=PtInRect(&bounds,previous)?222:
+        previous.x==current.x&&previous.y==current.y?40:166;
+    if(window->viewerCloseOpacity==opacity)return;
+    window->viewerCloseOpacity=opacity;
+    InvalidateRect(button->hwnd,nullptr,FALSE);
+}
+
 void ReplicaUi::OnDrawItem(HWND hwnd,DRAWITEMSTRUCT* draw) {
     if(!draw||(draw->CtlType!=ODT_STATIC&&draw->CtlType!=ODT_BUTTON))return;
     Window* window=WindowFor(hwnd);if(!window)return;
@@ -341,34 +364,51 @@ void ReplicaUi::OnDrawItem(HWND hwnd,DRAWITEMSTRUCT* draw) {
         const bool viewer=window->name==L"大图窗口";
         const int color=viewer?COLOR_WINDOW:COLOR_BTNFACE;
         FillRect(draw->hDC,&draw->rcItem,reinterpret_cast<HBRUSH>(color+1));
-        if(!d2d_||child.image.empty())return;
+        if(!d2d_)return;
         const auto properties=D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_IGNORE),96,96);
         if(!imageTarget_&&FAILED(d2d_->CreateDCRenderTarget(&properties,imageTarget_.GetAddressOf())))return;
         if(FAILED(imageTarget_->BindDC(draw->hDC,&draw->rcItem)))return;
-        ComPtr<ID2D1Bitmap> bitmap;
         const auto format=D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
             D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
-        if(FAILED(imageTarget_->CreateBitmap(D2D1::SizeU(child.imageWidth,child.imageHeight),
-            child.image.data(),child.imageWidth*4,format,bitmap.GetAddressOf())))return;
         const float width=static_cast<float>(draw->rcItem.right-draw->rcItem.left);
         const float height=static_cast<float>(draw->rcItem.bottom-draw->rcItem.top);
-        float w=static_cast<float>(child.imageWidth),h=static_cast<float>(child.imageHeight);
+        const auto paintImage=[&](const Child& picture,float canvasWidth,float canvasHeight,float opacity) {
+            if(picture.image.empty())return;
+            ComPtr<ID2D1Bitmap> bitmap;
+            if(FAILED(imageTarget_->CreateBitmap(D2D1::SizeU(picture.imageWidth,picture.imageHeight),
+                picture.image.data(),picture.imageWidth*4,format,bitmap.GetAddressOf())))return;
+            if(picture.imageMode==ImageMode::Tile) {
+                ComPtr<ID2D1BitmapBrush> brush;
+                const auto repeat=D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_WRAP,D2D1_EXTEND_MODE_WRAP);
+                if(SUCCEEDED(imageTarget_->CreateBitmapBrush(bitmap.Get(),repeat,brush.GetAddressOf())))
+                    imageTarget_->FillRectangle(D2D1::RectF(0,0,canvasWidth,canvasHeight),brush.Get());
+                return;
+            }
+            float w=static_cast<float>(picture.imageWidth),h=static_cast<float>(picture.imageHeight);
+            if(picture.imageMode==ImageMode::Stretch) {w=canvasWidth;h=canvasHeight;}
+            if(picture.imageMode==ImageMode::Fit) {const float scale=(std::min)(canvasWidth/w,canvasHeight/h);w*=scale;h*=scale;}
+            const float x=(canvasWidth-w)/2,y=(canvasHeight-h)/2;
+            imageTarget_->DrawBitmap(bitmap.Get(),D2D1::RectF(x,y,x+w,y+h),opacity);
+        };
         imageTarget_->BeginDraw();
         const COLORREF background=GetSysColor(color);
         imageTarget_->Clear(D2D1::ColorF(GetRValue(background)/255.f,GetGValue(background)/255.f,GetBValue(background)/255.f));
-        if(child.imageMode==ImageMode::Tile) {
-            ComPtr<ID2D1BitmapBrush> brush;
-            const auto repeat=D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_WRAP,D2D1_EXTEND_MODE_WRAP);
-            if(SUCCEEDED(imageTarget_->CreateBitmapBrush(bitmap.Get(),repeat,brush.GetAddressOf())))
-                imageTarget_->FillRectangle(D2D1::RectF(0,0,width,height),brush.Get());
-        } else {
-            if(child.imageMode==ImageMode::Stretch) {w=width;h=height;}
-            if(child.imageMode==ImageMode::Fit) {const float scale=(std::min)(width/w,height/h);w*=scale;h*=scale;}
-            const float x=(width-w)/2,y=(height-h)/2;
-            imageTarget_->DrawBitmap(bitmap.Get(),D2D1::RectF(x,y,x+w,y+h),
-                (draw->itemState&ODS_DISABLED)?0.4f:1.f);
+        float opacity=(draw->itemState&ODS_DISABLED)?0.4f:1.f;
+        if(viewer&&child.type==L"Lib3.8") {
+            // Composite the button on the same wallpaper pixels as its parent.
+            if(auto* picture=Find(window->hwnd,window->name,L"图片框EX1")) {
+                POINT offset{};
+                RECT bounds{};
+                MapWindowPoints(child.hwnd,picture->hwnd,&offset,1);
+                GetClientRect(picture->hwnd,&bounds);
+                imageTarget_->SetTransform(D2D1::Matrix3x2F::Translation(-static_cast<float>(offset.x),-static_cast<float>(offset.y)));
+                paintImage(*picture,static_cast<float>(bounds.right),static_cast<float>(bounds.bottom),1.f);
+                imageTarget_->SetTransform(D2D1::Matrix3x2F::Identity());
+            }
+            opacity=window->viewerCloseOpacity/255.f;
         }
+        paintImage(child,width,height,opacity);
         if(imageTarget_->EndDraw()==D2DERR_RECREATE_TARGET)imageTarget_.Reset();
         if(draw->CtlType==ODT_BUTTON&&(draw->itemState&ODS_FOCUS)) DrawFocusRect(draw->hDC,&draw->rcItem);
         return;
@@ -455,6 +495,7 @@ void ReplicaUi::SetProgress(const std::wstring& w,const std::wstring& c,int posi
 void ReplicaUi::SetImageMode(const std::wstring& w,const std::wstring& c,ImageMode mode) {
     auto* child=Find(nullptr,w,c);if(!child)return;
     child->imageMode=mode;InvalidateRect(child->hwnd,nullptr,FALSE);
+    if(w==L"大图窗口")if(auto* button=Find(nullptr,w,L"超级按钮EX1"))InvalidateRect(button->hwnd,nullptr,FALSE);
 }
 bool ReplicaUi::SetImage(const std::wstring& w,const std::wstring& c,const std::vector<unsigned char>& bytes) {
     auto* child=Find(nullptr,w,c);if(!child||(!IsImage(child->type)&&!(w==L"大图窗口"&&child->type==L"Lib3.8")))return false;
@@ -485,6 +526,7 @@ bool ReplicaUi::SetImage(const std::wstring& w,const std::wstring& c,const std::
     std::vector<unsigned char> pixels(static_cast<size_t>(stride)*targetHeight);
     if(FAILED(source->CopyPixels(nullptr,stride,static_cast<UINT>(pixels.size()),pixels.data())))return false;
     child->image=std::move(pixels);child->imageWidth=targetWidth;child->imageHeight=targetHeight;
+    if(w==L"大图窗口"&&c==L"图片框EX1")if(auto* button=Find(nullptr,w,L"超级按钮EX1"))InvalidateRect(button->hwnd,nullptr,FALSE);
     InvalidateRect(child->hwnd,nullptr,TRUE);return true;
 }
 } // namespace stoutwall

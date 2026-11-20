@@ -794,10 +794,28 @@ struct ProductBackend::Impl {
             if (request.value < 0 || request.value > 9) Fail(L"Frequency index must be 0..9");
             config.changeFreq = static_cast<DWORD>(request.value); UpdateInterval(); SaveConfig();
             message = L"Change frequency updated"; break;
-        case ProductAction::AutoSave:
+        case ProductAction::AutoSave: {
             if (request.value != 0 && request.value != 1) Fail(L"AutoSave value must be 0 or 1");
-            config.autoSave = static_cast<DWORD>(request.value); SaveConfig();
-            message = config.autoSave ? L"Automatic gallery saving enabled" : L"Automatic gallery saving disabled"; break;
+            const DWORD previous = config.autoSave;
+            config.autoSave = static_cast<DWORD>(request.value);
+            try { SaveConfig(); }
+            catch (...) { config.autoSave = previous; throw; }
+            message = config.autoSave ? L"Automatic gallery saving enabled" : L"Automatic gallery saving disabled";
+            if (testMode || previous || !config.autoSave) break;
+
+            bool added = false;
+            try { added = ImportLatest(FetchMetadata()); }
+            catch (const std::exception& error) {
+                if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
+                message += L"; could not add the latest wallpaper to the gallery: " + ErrorText(error);
+                break;
+            }
+            if (added) {
+                RebuildSequence(); UpdateBrowseSelection(); SaveConfig();
+                message += L"; latest wallpaper added to the gallery";
+            } else message += L"; latest wallpaper is already in the gallery";
+            break;
+        }
         case ProductAction::AutoRun:
             if (request.value != 0 && request.value != 1) Fail(L"AutoRun preference value must be 0 or 1");
             WriteAutoRunPreference(configPath, request.value != 0);
