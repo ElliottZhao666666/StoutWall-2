@@ -14,8 +14,9 @@ failure, including missing prerequisites. A running legacy instance is left alon
 The script checks child windows on reopen, disabled seven-day entries, gallery preview
 click notifications, both theme package formats and same-name refusal. Use a
 fixture with at least two dated pairs for theme export. Packages stay in the
-test data root and are never installed. The source, relocation and iOS checks
-only open and close their windows.
+test data root and are never installed. Source selection is saved through the
+isolated UI-test path without a network request. iOS copy/open actions are
+recorded under the isolated data root instead of touching the clipboard or browser.
 
 The tray test sends the shell's restore notification to the same hidden instance.
 Check the physical tray icon and large-image rendering separately. Do not operate
@@ -224,6 +225,12 @@ namespace StoutWallVerification {
             return Class(h).Equals("Static", StringComparison.OrdinalIgnoreCase) &&
                 (GetWindowLongW(h, -16) & 0x11F) == 0x10D; // SS_OWNERDRAW | SS_NOTIFY
         }
+        public IntPtr[] ImageControls(IntPtr parent) {
+            var images = new List<IntPtr>();
+            foreach (var h in Windows(parent)) if (IsImageControl(h)) images.Add(h);
+            images.Sort(delegate(IntPtr a, IntPtr b) { return ControlId(a).CompareTo(ControlId(b)); });
+            return images.ToArray();
+        }
         public void ClickPreview(IntPtr preview) {
             if (!Visible(preview) || !Enabled(preview) || !IsImageControl(preview))
                 throw new InvalidOperationException("Expected visible preview control");
@@ -318,6 +325,15 @@ namespace StoutWallVerification {
         public void CloseThemeResult(IntPtr dialog, IntPtr theme, string title) {
             if (Class(dialog) != "#32770" || Owner(dialog) != theme || Title(dialog) != title || !Visible(dialog))
                 throw new InvalidOperationException("Expected the theme export result");
+            Post(dialog, 0x0010, 0, IntPtr.Zero); // WM_CLOSE
+        }
+        public void CloseInfoNotice(IntPtr dialog, IntPtr owner, string title, string body) {
+            if (Class(dialog) != "#32770" || Owner(dialog) != owner || Title(dialog) != title || !Visible(dialog))
+                throw new InvalidOperationException("Expected the informational notice");
+            bool found = false;
+            foreach (var h in Windows(dialog))
+                if (Class(h) == "Static" && Text(h).Contains(body)) found = true;
+            if (!found) throw new InvalidOperationException("Informational notice body did not match");
             Post(dialog, 0x0010, 0, IntPtr.Zero); // WM_CLOSE
         }
         public void CloseChild(IntPtr child, IntPtr main) {
@@ -427,6 +443,8 @@ function Find-Control([IntPtr] $Parent, [string] $Class, [string] $Caption = '',
 function Click-Allowed([IntPtr] $Parent, [string] $Caption) {
     $allowed = @('选择壁纸源...', '壁纸库位置...', '查看/管理壁纸库', '导出为Windows 主题包',
         '获取 iOS 版', '退出软件', '收藏', '取消收藏', '手动选择', '…', '整个壁纸库', '开始导出',
+        '检测可用性', '确定', '必应(www.bing.com)', '必应中国(cn.bing.com) [默认]',
+        '胖哥自建API(bingpics.ybjun.com)', '点此查看',
         'Windows 7/Vista (*.themepack)', 'Windows 11/10/8.1/8 (*.deskthemepack)',
         '透明效果', '自动主题色', '深色模式 (Win11/10)', '乱序更换')
     Assert-That ($Caption -cin $allowed) "Button outside the acceptance allowlist: $Caption"
@@ -489,6 +507,100 @@ function Test-ChildReopen([string] $Button, [string] $Title, [string] $MarkerCla
         Close-Child $child $Title
     }
     Write-Host "PASS: '$Title' closes and reopens."
+}
+
+function Assert-SourceSelection([IntPtr] $Window, [int] $Expected) {
+    $captions = @('必应(www.bing.com)', '必应中国(cn.bing.com) [默认]', '胖哥自建API(bingpics.ybjun.com)')
+    $checked = 0
+    for ($index = 0; $index -lt $captions.Count; $index++) {
+        $radio = Find-Control $Window Button $captions[$index] -Visible
+        Assert-That ([bool]$radio) "Source radio missing: $($captions[$index])."
+        $state = $session.CheckedState($radio)
+        if ($state -eq 1) { $checked++ }
+        Assert-That ($state -eq [int]($Expected -eq ($index + 1))) "Unexpected source radio state for $($captions[$index])."
+    }
+    Assert-That ($checked -eq 1) 'Exactly one wallpaper source must be selected.'
+}
+
+function Test-SourceSelection {
+    Select-Page 2
+    $source = Open-Child '选择壁纸源...' '选择新壁纸获取来源...'
+    Assert-SourceSelection $source 2
+    $availability = Find-Control $source Button '检测可用性' -Visible
+    Assert-That ($availability -and $session.Enabled($availability)) 'The original no-op availability button must remain clickable.'
+    Click-Allowed $source '检测可用性'
+    Assert-SourceSelection $source 2
+
+    $cases = @(
+        [pscustomobject]@{ Caption = '必应(www.bing.com)'; Value = 1 },
+        [pscustomobject]@{ Caption = '必应中国(cn.bing.com) [默认]'; Value = 2 },
+        [pscustomobject]@{ Caption = '胖哥自建API(bingpics.ybjun.com)'; Value = 3 }
+    )
+    foreach ($case in $cases) {
+        $radio = Find-Control $source Button $case.Caption -Visible
+        Click-Allowed $source $case.Caption
+        $null = Wait-For "source radio '$($case.Caption)' checked" { $session.CheckedState($radio) -eq 1 }
+        Click-Allowed $source '确定'
+        $null = Wait-For "source $($case.Value) saved and UI restored" {
+            $confirm = Find-Control $source Button '确定' -Visible
+            $refreshing = Find-Control $source Button '刷新中…' -Visible
+            $confirm -and $session.Enabled($confirm) -and !$refreshing -and $session.CheckedState($radio) -eq 1
+        }
+        Close-Child $source '选择新壁纸获取来源...'
+        $source = Open-Child '选择壁纸源...' '选择新壁纸获取来源...'
+        Assert-SourceSelection $source $case.Value
+    }
+
+    $unsaved = Find-Control $source Button '必应中国(cn.bing.com) [默认]' -Visible
+    Click-Allowed $source '必应中国(cn.bing.com) [默认]'
+    $null = Wait-For 'unsaved source radio selected' { $session.CheckedState($unsaved) -eq 1 }
+    Close-Child $source '选择新壁纸获取来源...'
+    $source = Open-Child '选择壁纸源...' '选择新壁纸获取来源...'
+    Assert-SourceSelection $source 3
+    Close-Child $source '选择新壁纸获取来源...'
+    Write-Host 'PASS: Source radio selection, no-op availability button, save, reopen and cancel behavior.'
+}
+
+function Test-IosExternalActions {
+    $ios = Open-Child '获取 iOS 版' '胖哥每日壁纸 iOS版'
+    $images = $session.ImageControls($ios)
+    Assert-That ($images.Count -eq 2) 'Expected the two QR image controls in the iOS window.'
+    $actionLog = Join-Path $dataRoot 'external-actions.tsv'
+    Assert-That (!(Test-Path -LiteralPath $actionLog)) 'External-action test log must start empty.'
+
+    $urls = @(
+        'https://www.icloud.com/shortcuts/34f07ae9921b4195b855fa4b4e35e814',
+        'https://www.icloud.com/shortcuts/fd04e26f4cf246e6868e34cf24d96f2c'
+    )
+    for ($index = 0; $index -lt $urls.Count; $index++) {
+        $session.ClickPreview($images[$index])
+        $notice = Wait-For "iOS copy confirmation $($index + 1)" {
+            $found = @(Get-TestWindow '快捷指令链接已复制' '#32770' | Where-Object { $session.Owner($_) -eq $ios })
+            Assert-That ($found.Count -le 1) 'Multiple iOS copy confirmations.'
+            if ($found.Count -eq 1) { $found[0] }
+        }
+        $body = Find-Control $notice Static '快捷指令链接已经复制到剪贴板，快去分享给苹果设备吧！' -Visible
+        Assert-That ([bool]$body) 'The original copy-success text changed.'
+        $session.CloseInfoNotice($notice, $ios, '快捷指令链接已复制', '快捷指令链接已经复制到剪贴板')
+        $null = Wait-For 'iOS copy confirmation closed' { !$session.Alive($notice) }
+    }
+
+    Click-Allowed $ios '点此查看'
+    $expected = @(
+        ('copy' + [char]9 + $urls[0]),
+        ('copy' + [char]9 + $urls[1]),
+        ('open' + [char]9 + 'https://mp.weixin.qq.com/s?__biz=Mzg4NDYyOTA2NA==&mid=2247486223&idx=1&sn=1c0267ff6f47274d8e67272cd2cba775&chksm=cfb40028f8c3893eb8461cee7fa72242b12813f4d84b365c1bb1c82489e4e226b1f1a6b828e7#rd')
+    )
+    $actual = Wait-For 'iOS copy and help actions recorded under the isolated root' {
+        if (!(Test-Path -LiteralPath $actionLog)) { return $false }
+        $lines = @(Get-Content -LiteralPath $actionLog -Encoding UTF8)
+        if ($lines.Count -eq $expected.Count) { return ,$lines }
+        return $false
+    }
+    Assert-That (($actual -join [Environment]::NewLine) -ceq ($expected -join [Environment]::NewLine)) 'iOS copy/help action routing or source order changed.'
+    Close-Child $ios '胖哥每日壁纸 iOS版'
+    Test-ChildReopen '获取 iOS 版' '胖哥每日壁纸 iOS版' Button '点此查看'
+    Write-Host 'PASS: Both iOS copy mappings and help URL; UI test did not use the system clipboard or launch a browser.'
 }
 
 function Test-SevenDayUnavailable {
@@ -941,7 +1053,7 @@ try {
             if ($run -eq 1 -and !$FocusedClearFavorites) {
                 Test-SevenDayUnavailable
                 Select-Page 2
-                Test-ChildReopen '选择壁纸源...' '选择新壁纸获取来源...' Button '确定'
+                Test-SourceSelection
                 Test-ChildReopen '壁纸库位置...' '请指定新的壁纸库位置:' Button '确定修改/迁移'
                 Select-Page 3
                 $themeOutput = (New-Item -ItemType Directory -Path (Join-Path $dataRoot 'theme-output')).FullName
@@ -955,7 +1067,7 @@ try {
                 Write-Host 'PASS: Theme window closes and reopens.'
                 if ($pairs.Count -lt 2) { Write-Host 'SKIP: Theme export and same-name protection require at least two fixture pairs.' }
                 Select-Page 4
-                Test-ChildReopen '获取 iOS 版' '胖哥每日壁纸 iOS版' Button '点此查看'
+                Test-IosExternalActions
                 Select-Page 0
                 Write-Host 'PASS: Five-page switching.'
             }

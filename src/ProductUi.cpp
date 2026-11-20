@@ -92,12 +92,12 @@ std::wstring BoundedText(const wchar_t* value, size_t capacity) {
     return std::wstring(value, value + length);
 }
 
-void OpenPage(HWND owner,const std::wstring& address) {
+void OpenSystemPage(HWND owner,const std::wstring& address) {
     if (address.rfind(L"https://",0)==0 || address.rfind(L"http://",0)==0)
         ShellExecuteW(owner,L"open",address.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
 }
 
-bool CopyText(HWND owner,const wchar_t* text) {
+bool CopySystemText(HWND owner,const wchar_t* text) {
     const size_t bytes=(wcslen(text)+1)*sizeof(wchar_t);
     HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE,bytes);
     if (!memory) return false;
@@ -369,6 +369,34 @@ struct ProductUi::State {
 
     State(HINSTANCE h, ProductOptions o) : instance(h), options(std::move(o)) {}
 
+    bool RecordUiTestAction(const wchar_t* action,const std::wstring& value) const {
+        // Only --ui-test redirects external actions. Normal runs use the system APIs.
+        const auto path=IsolatedDestination(options.dataRoot,
+            (fs::path(options.dataRoot)/L"external-actions.tsv").wstring());
+        if(path.empty())return false;
+        const std::wstring record=std::wstring(action)+L"\t"+value+L"\r\n";
+        const int size=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,record.c_str(),-1,nullptr,0,nullptr,nullptr);
+        if(size<=1)return false;
+        std::vector<char> bytes(static_cast<size_t>(size));
+        if(!WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,record.c_str(),-1,bytes.data(),size,nullptr,nullptr))return false;
+        HANDLE file=CreateFileW(path.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE)return false;
+        DWORD written=0;
+        const bool complete=WriteFile(file,bytes.data(),static_cast<DWORD>(size-1),&written,nullptr)&&written==static_cast<DWORD>(size-1);
+        CloseHandle(file);
+        return complete;
+    }
+
+    void OpenPage(HWND owner,const std::wstring& address) const {
+        if(address.rfind(L"https://",0)!=0&&address.rfind(L"http://",0)!=0)return;
+        if(options.uiTest)RecordUiTestAction(L"open",address);
+        else OpenSystemPage(owner,address);
+    }
+
+    bool CopyText(HWND owner,const wchar_t* text) const {
+        return options.uiTest?RecordUiTestAction(L"copy",text):CopySystemText(owner,text);
+    }
+
     ProductRequest Request(ProductAction action, int value = 0) const {
         ProductRequest request;
         request.action = action;
@@ -403,7 +431,7 @@ struct ProductUi::State {
                 ui->SetChecked(kSourceWindow, kSourceRadios[i], snapshot.config.source == SWN_GLOBAL + i);
         }
         for (const auto* radio : kSourceRadios) ui->SetEnabled(kSourceWindow, radio, !sourceBusy);
-        ui->SetEnabled(kSourceWindow, L"按钮EX1", false); // The original has no availability-test handler.
+        ui->SetEnabled(kSourceWindow, L"按钮EX1", !sourceBusy); // The original button is a clickable no-op.
         ui->SetEnabled(kSourceWindow, L"按钮EX13", !sourceBusy);
         ui->SetText(kSourceWindow, L"按钮EX13", sourceBusy ? L"刷新中…" : L"确定");
     }
@@ -426,6 +454,7 @@ struct ProductUi::State {
                                      IsolatedDestination(options.dataRoot, options.configPath).empty()))
                 throw std::runtime_error(u8"当前图库或配置文件已不在隔离测试目录内。");
             auto saved = backend->Execute(Request(ProductAction::Source, source));
+            if (options.uiTest) return Result(kSourceOperation, std::move(saved));
             try {
                 return Result(kSourceOperation, backend->Execute(Request(ProductAction::Refresh)));
             } catch (const std::exception& error) {
@@ -1040,7 +1069,7 @@ struct ProductUi::State {
             else if (event.control == L"按钮EX11") MessageBoxW(ui->MainWindow(),
                 L"联系我(作者)的三种方式：\r\n1.扫描左下方二维码，在B站私信发送问题或建议。\r\n2.扫描旁边的二维码或微信搜一搜‘月半菌’。\r\n3.给我发邮件：crh380bl@outlook.com。",L"软件遇到问题或想提点建议？",MB_OK|MB_ICONINFORMATION);
             else if (event.control == L"按钮EX10"&&MessageBoxW(ui->MainWindow(),
-                L"请到微信公众号【月半菌】内点击【胖哥出品】→【每日壁纸】。点击【确定】可直接打开。",
+                L"请到微信公众号【月半菌】内底部点击【胖哥出品】菜单→【每日壁纸】查看帮助和介绍内容。点击【确定】可直接打开。",
                 L"帮助和介绍内容",MB_OKCANCEL|MB_ICONINFORMATION)==IDOK)
                 OpenPage(ui->MainWindow(),L"https://mp.weixin.qq.com/mp/homepage?__biz=Mzg4NDYyOTA2NA==&hid=2&sn=70edb0c14643345cd643ecc566234bec");
             else if (event.control == L"按钮EX6") {
@@ -1132,7 +1161,10 @@ struct ProductUi::State {
 
         if (result.payload) UpdateUi(*std::static_pointer_cast<ProductSnapshot>(result.payload));
         else UpdateGalleryUi();
-        if (operation == kSourceOperation) UpdateSourceUi(true);
+        if (operation == kSourceOperation) {
+            UpdateSourceUi(true);
+            if(result.payload)ui->Close(kThemeSelectionWindow);
+        }
         if (operation == kRelocateOperation) {
             if (result.code == 0) SetRelocationEdit(snapshot.galleryDir);
             SetRelocationProgress(result.code == 0 ? 100 : 0);
