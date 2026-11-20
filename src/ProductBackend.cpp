@@ -644,13 +644,13 @@ struct ProductBackend::Impl {
         if (initialized || libraryOpen) Fail(L"ProductBackend is already initialized");
         ownerThread = GetCurrentThreadId(); testMode = testing; cancel = cancelEvent; proxy = proxyText;
         if (runtimeText.empty()) Fail(L"Runtime directory is required");
-        if (configText.empty()) Fail(L"An isolated configPath is required; runtime/StoutWall.cfg is never discovered");
+        if (configText.empty()) Fail(L"A configPath is required; runtime/StoutWall.cfg is never discovered");
         runtime = fs::absolute(fs::path(runtimeText)).lexically_normal();
-        if (dataRootText.empty()) Fail(L"An isolated dataRoot is required; runtime directory fallback is disabled");
+        if (dataRootText.empty()) Fail(L"A dataRoot is required; runtime directory fallback is disabled");
         dataRoot = fs::absolute(fs::path(dataRootText)).lexically_normal();
         configPath = fs::absolute(fs::path(configText)).lexically_normal();
         if (!IsWithin(dataRoot, configPath))
-            Fail(L"configPath must be inside the isolated dataRoot");
+            Fail(L"configPath must be inside dataRoot");
         currentImagePath = dataRoot / L"Current_Wall.jpg";
         galleryDir = dataRoot / L"Gallery";
         EnsureDirectory(runtime); EnsureDirectory(dataRoot);
@@ -660,8 +660,9 @@ struct ProductBackend::Impl {
         CheckPlatform(SWP_LoadConfig(configPath.c_str(), &config), L"Loading StoutWall.cfg");
         autoRunPreference = ReadAutoRunPreference(configPath);
         if (config.galleryDir[0]) {
-            const fs::path configuredGallery = fs::absolute(fs::path(config.galleryDir)).lexically_normal();
-            if (IsWithin(dataRoot, configuredGallery)) galleryDir = configuredGallery;
+            const auto configuredGallery = fs::path(config.galleryDir).lexically_normal();
+            if (configuredGallery.is_absolute() && (!testMode || IsWithin(dataRoot, configuredGallery)))
+                galleryDir = configuredGallery;
         }
         Put(config.galleryDir, galleryDir.wstring(), L"galleryDir");
         if (config.mode < SWP_DAILY || config.mode > SWP_FAVORITES) config.mode = SWP_DAILY;

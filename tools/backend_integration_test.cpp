@@ -221,10 +221,79 @@ void CheckSparseGallery(const fs::path& runtime, const fs::path& fixture, const 
     std::wcout << L"PASS: zero- and one-image galleries and rejected empty mode change.\n";
 }
 
+void CheckRelocationFailure(const fs::path& runtime, const fs::path& fixture, const fs::path& root) {
+    using stoutwall::ProductAction;
+    const auto gallery = root / L"Gallery";
+    const auto target = root / L"Target";
+    const auto config = root / L"StoutWall.cfg";
+    const auto marker = target / L"unrelated.txt";
+    CopyFixture(fixture, gallery);
+    fs::create_directory(target);
+    std::ofstream(marker) << "retain this file";
+    const auto expectedMarker = Read(marker);
+    auto backend = std::make_unique<stoutwall::ProductBackend>();
+    const auto initial = backend->Initialize(runtime.wstring(), root.wstring(), config.wstring(), true, nullptr, L"");
+    const auto date = Date(initial.records.front());
+    const auto sourceFile = gallery / (L"Image_" + date + L".EDT");
+    const auto conflictFile = target / sourceFile.filename();
+    std::ofstream(conflictFile) << "retain this conflicting file";
+    const auto expectedConflict = Read(conflictFile);
+    const auto expectFailure = [&]() {
+        try { Run(*backend, ProductAction::Relocate, 0, target.wstring()); }
+        catch (const std::runtime_error&) { return; }
+        throw std::runtime_error("expected relocation to fail");
+    };
+    expectFailure();
+    Require(Read(conflictFile) == expectedConflict, "relocation overwrote an existing target file");
+    fs::remove(conflictFile);
+
+    const HANDLE held = CreateFileW(sourceFile.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(held != INVALID_HANDLE_VALUE, "unable to lock an isolated source file");
+    try { expectFailure(); }
+    catch (...) { CloseHandle(held); throw; }
+    CloseHandle(held);
+    Require(std::distance(fs::directory_iterator(target), fs::directory_iterator()) == 1 &&
+                Read(marker) == expectedMarker,
+            "failed relocation left partial files or changed the existing target contents");
+    auto state = Run(*backend, ProductAction::BrowseSelect, 0, date);
+    Require(state.hasSelected && state.total == initial.total && fs::equivalent(state.galleryDir, gallery),
+            "failed relocation did not restore the original gallery session");
+    SWP_Config disk{};
+    disk.cbSize = sizeof(disk);
+    Require(SWP_LoadConfig(config.c_str(), &disk) == ERROR_SUCCESS && fs::equivalent(disk.galleryDir, gallery),
+            "failed relocation changed the persisted gallery location");
+
+    state = Run(*backend, ProductAction::Relocate, 0, target.wstring());
+    Require(state.total == initial.total && fs::equivalent(state.galleryDir, target) && Read(marker) == expectedMarker,
+            "retry did not switch to the complete target gallery");
+    backend.reset(); // The target index remains exclusively open until shutdown.
+    for (const auto& entry : fs::directory_iterator(gallery)) {
+        if (!entry.is_regular_file()) continue;
+        Require(Read(entry.path()) == Read(target / entry.path().filename()), "migrated gallery bytes differ");
+    }
+    std::wcout << L"PASS: relocation conflict, locked-source rollback and byte-identical retry.\n";
+}
+
+void CheckMetadataDates() {
+    const std::pair<const char*, DWORD> cases[] = {{"20261399", ERROR_INVALID_DATA},
+        {"20260229", ERROR_INVALID_DATA}, {"19000229", ERROR_INVALID_DATA},
+        {"20000229", ERROR_SUCCESS}, {"20261121", ERROR_SUCCESS}};
+    for (const auto& [date, expected] : cases) {
+        const auto json = std::string(R"({"title":"Fixture","urlbase":"/th?id=OHR.Fixture","enddate":")") + date + "\"}";
+        SWN_Metadata metadata{};
+        metadata.cbSize = sizeof(metadata);
+        Require(SWN_ParseMetadata(SWN_CUSTOM, json.data(), static_cast<DWORD>(json.size()), &metadata) == expected,
+                std::string("unexpected metadata parser status for ") + date);
+    }
+    std::wcout << L"PASS: metadata date validation, including century leap-year rules.\n";
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     try {
+        CheckMetadataDates();
         const fs::path runtime = fs::absolute(Argument(argc, argv, L"--runtime"));
         const fs::path fixture = fs::absolute(Argument(argc, argv, L"--fixture"));
         const fs::path root = fs::absolute(Argument(argc, argv, L"--root"));
@@ -398,6 +467,7 @@ int wmain(int argc, wchar_t** argv) {
         std::wcout << L"PASS: isolated configuration and gallery reopen after backend shutdown.\n";
         CheckTick(runtime, fixture, root / L"tick");
         CheckSparseGallery(runtime, fixture, root / L"sparse");
+        CheckRelocationFailure(runtime, fixture, root / L"relocation-failure");
         std::wcout << L"Retained test root: " << root.wstring() << L"\n";
         return 0;
     } catch (const std::exception& error) {

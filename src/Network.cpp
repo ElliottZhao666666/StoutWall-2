@@ -66,10 +66,24 @@ public:explicit Parser(const std::wstring&x):s(x){}bool parse(J&v){if(!value(v))
 std::wstring field(const J*j,const wchar_t*k){const J*v=j?j->get(k):nullptr;return v&&(v->k==J::str||v->k==J::atom)?v->s:L"";}
 std::wstring trim(std::wstring s){size_t a=s.find_first_not_of(L" \t\r\n");if(a==s.npos)return L"";return s.substr(a,s.find_last_not_of(L" \t\r\n")-a+1);}
 bool put(wchar_t*d,size_t cap,const std::wstring&s){if(!d||s.size()>=cap)return false;std::copy(s.begin(),s.end(),d);d[s.size()]=0;return true;}
+bool ValidDate(const std::wstring& date) {
+    if (date.size() != 8 || !std::all_of(date.begin(), date.end(),
+            [](wchar_t c) { return c >= L'0' && c <= L'9'; })) return false;
+    const auto number = [&](size_t first, size_t end) {
+        unsigned value = 0;
+        for (size_t i = first; i < end; ++i) value = value * 10 + (date[i] - L'0');
+        return value;
+    };
+    const unsigned year = number(0, 4), month = number(4, 6), day = number(6, 8);
+    if (!year || !month || month > 12 || !day) return false;
+    constexpr unsigned days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    return day <= days[month - 1] + (month == 2 && leap);
+}
 DWORD parseMetadata(DWORD source,const void*bytes,DWORD count,SWN_Metadata*out){if(source<1||source>3||!out||out->cbSize<sizeof(*out))return ERROR_INVALID_PARAMETER;std::wstring text;if(!Utf8(bytes,count,text))return ERROR_INVALID_DATA;J root;Parser parser(text);if(!parser.parse(root)||root.k!=J::obj)return ERROR_INVALID_DATA;const J*item=&root;if(source!=SWN_CUSTOM){const J*images=root.get(L"images");if(!images||images->k!=J::arr||images->a.empty()||images->a[0].k!=J::obj)return ERROR_INVALID_DATA;item=&images->a[0];}
  std::wstring date=field(item,L"enddate"),title=field(item,L"title"),desc=field(item,L"description"),author=field(item,L"author"),link=field(item,L"copyrightlink"),base=field(item,L"urlbase");
  if(source!=SWN_CUSTOM){std::wstring copyright=field(item,L"copyright");size_t mark=copyright.find(L" (");if(mark!=copyright.npos){if(desc.empty())desc=trim(copyright.substr(0,mark));if(author.empty()){author=trim(copyright.substr(mark+2));if(!author.empty()&&author.back()==L')')author.pop_back();author=trim(author);if(!author.empty()&&author.front()==0xa9){author.erase(author.begin());author=trim(author);}}}else if(desc.empty())desc=copyright;}
- if(date.size()!=8||!std::all_of(date.begin(),date.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';})||title.empty()||base.empty())return ERROR_INVALID_DATA;SWN_Metadata m{};m.cbSize=sizeof(m);
+ if(!ValidDate(date)||title.empty()||base.empty())return ERROR_INVALID_DATA;SWN_Metadata m{};m.cbSize=sizeof(m);
  if(!put(m.enddate,_countof(m.enddate),date)||!put(m.title,_countof(m.title),title)||!put(m.description,_countof(m.description),desc)||!put(m.author,_countof(m.author),author)||!put(m.copyrightlink,_countof(m.copyrightlink),link)||!put(m.urlbase,_countof(m.urlbase),base))return ERROR_INSUFFICIENT_BUFFER;
  std::wstring wp=field(item,L"wp");m.wp=(wp==L"true"||wp==L"1");*out=m;return ERROR_SUCCESS;}
 const wchar_t*const sizes[]={L"UHD",L"1920x1200",L"1920x1080",L"1024x768",L"1080x1920"};

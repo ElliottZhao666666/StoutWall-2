@@ -66,6 +66,14 @@ std::wstring DefaultDataRoot() {
     return (base / L"StoutWallReBuild2").wstring();
 }
 
+fs::path NewTestDataRoot() {
+    GUID id{};
+    wchar_t token[39]{};
+    if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, token, _countof(token)))
+        throw std::runtime_error("Unable to allocate an isolated test data path");
+    return fs::temp_directory_path() / (L"StoutWallReBuild2-Test-" + std::wstring(token));
+}
+
 bool IsWithin(const fs::path& rootPath, const fs::path& childPath) {
     const std::wstring root = fs::absolute(rootPath).lexically_normal().wstring();
     const std::wstring child = fs::absolute(childPath).lexically_normal().wstring();
@@ -266,28 +274,26 @@ struct PreviewKey {
 
 ProductOptions ParseProductOptions(HINSTANCE instance) {
     ProductOptions options;
-    options.testMode = true;
     options.runtime = ModuleDirectory(instance);
-    options.dataRoot = DefaultDataRoot();
 
     int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) throw std::runtime_error("Unable to parse command line");
-    bool forceTestMode = false;
+    const std::unique_ptr<LPWSTR, decltype(&LocalFree)> arguments(
+        CommandLineToArgvW(GetCommandLineW(), &argc), &LocalFree);
+    if (!arguments) throw std::runtime_error("Unable to parse command line");
+    const auto argv = arguments.get();
     for (int i = 1; i < argc; ++i) {
         const std::wstring argument(argv[i]);
         if (argument == L"--test-mode") {
-            forceTestMode = true;
+            options.testMode = true;
             continue;
         }
         if (argument == L"--ui-test") {
+            options.testMode = true;
             options.uiTest = true;
             continue;
         }
-        if (argument == L"--allow-wallpaper") {
-            options.testMode = false;
-            continue;
-        }
+        // Older launchers may still pass this flag; explicit test flags take precedence.
+        if (argument == L"--allow-wallpaper") continue;
         if (argument == L"-q") {
             options.quiet = true;
             continue;
@@ -297,31 +303,35 @@ ProductOptions ParseProductOptions(HINSTANCE instance) {
         bool consumed = false;
         for (size_t k = 0; k < _countof(keys); ++k) {
             const std::wstring prefix = std::wstring(keys[k]) + L"=";
-            if (argument.compare(0, prefix.size(), prefix) == 0) {
-                *targets[k] = argument.substr(prefix.size());
-                consumed = true;
-                break;
-            }
-            if (argument == keys[k] && i + 1 < argc) {
+            if (argument.compare(0, prefix.size(), prefix) == 0) *targets[k] = argument.substr(prefix.size());
+            else if (argument == keys[k]) {
+                if (i + 1 >= argc || argv[i + 1][0] == L'-')
+                    throw std::runtime_error("Missing command-line option value");
                 *targets[k] = argv[++i];
-                consumed = true;
-                break;
+            } else {
+                continue;
             }
+            if (k < 2 && targets[k]->empty()) throw std::runtime_error("Data and config paths must not be empty");
+            consumed = true;
+            break;
         }
-        if (!consumed && (argument == L"--data-root" || argument == L"--config" || argument == L"--proxy")) {
-            LocalFree(argv);
-            throw std::runtime_error("Missing command-line option value");
-        }
+        if (!consumed) throw std::runtime_error("Unknown command-line option");
     }
-    LocalFree(argv);
-    if (forceTestMode) options.testMode = true;
 
-    if (options.dataRoot.empty()) options.dataRoot = DefaultDataRoot();
+    const auto productRoot = fs::absolute(DefaultDataRoot()).lexically_normal();
+    if (!options.testMode && (!options.dataRoot.empty() || !options.configPath.empty()))
+        throw std::runtime_error("--data-root and --config require --test-mode or --ui-test");
+    if (options.dataRoot.empty()) options.dataRoot = (options.testMode ? NewTestDataRoot() : productRoot).wstring();
+    options.dataRoot = fs::absolute(options.dataRoot).lexically_normal().make_preferred().wstring();
+    if (options.testMode && (IsWithin(productRoot, options.dataRoot) || IsWithin(options.dataRoot, productRoot)))
+        throw std::runtime_error("The test data root must be separate from the product data root");
+
     if (options.configPath.empty()) options.configPath = (fs::path(options.dataRoot) / L"StoutWall.cfg").wstring();
-    if (!IsWithin(options.dataRoot, options.configPath))
+    options.configPath = fs::absolute(options.configPath).lexically_normal().make_preferred().wstring();
+    if (!IsWithin(options.dataRoot, options.configPath) || IsWithin(options.configPath, options.dataRoot))
         throw std::runtime_error("--config must be located inside --data-root");
-    options.dataRoot = fs::absolute(options.dataRoot).lexically_normal().wstring();
-    options.configPath = fs::absolute(options.configPath).lexically_normal().wstring();
+    if (options.testMode && IsolatedDestination(options.dataRoot, options.configPath).empty())
+        throw std::runtime_error("The isolated config path must not use a redirected directory");
     return options;
 }
 
@@ -422,7 +432,11 @@ struct ProductUi::State {
     }
 
     fs::path RelocationDestination(const std::wstring& input) const {
-        auto path = IsolatedDestination(options.dataRoot, input);
+        const auto start = input.find_first_not_of(L" \t\r\n");
+        if (start == std::wstring::npos) return {};
+        const fs::path entered = input.substr(start, input.find_last_not_of(L" \t\r\n") - start + 1);
+        auto path = options.testMode ? IsolatedDestination(options.dataRoot, entered)
+                                     : entered.is_absolute() ? entered.lexically_normal() : fs::path{};
         if (path.empty() || path.native().size() >= SWP_PATH_CAP) return {};
         return path;
     }
@@ -436,7 +450,7 @@ struct ProductUi::State {
         bool valid = false;
         if (relocateBusy) status = L"正在检查目标壁纸库并切换或迁移……";
         else if (input.find_first_not_of(L" \t\r\n") == std::wstring::npos) status = L"请指定一个壁纸库目录！";
-        else if (path.empty()) status = L"请选择隔离测试目录内的有效路径。";
+        else if (path.empty()) status = options.testMode ? L"请选择隔离测试目录内的有效路径。" : L"请选择有效的壁纸库路径。";
         else if (IsWithin(current, path) && IsWithin(path, current)) status = L"已选的是当前的壁纸库目录！";
         else if (IsWithin(current, path) || IsWithin(path, current)) status = L"请选择与当前壁纸库互不包含的目录。";
         else {
@@ -481,9 +495,10 @@ struct ProductUi::State {
             if (path.empty() || IsWithin(snapshot.galleryDir, path) || IsWithin(path, snapshot.galleryDir)) return;
             relocateBusy = runner.Submit(kRelocateOperation, [this, path, original = snapshot.galleryDir]() {
                 const auto checked = RelocationDestination(path.wstring());
-                if (checked.empty() || IsolatedDestination(options.dataRoot, original).empty() ||
-                    IsolatedDestination(options.dataRoot, options.configPath).empty())
-                    throw std::runtime_error(u8"源目录、目标目录或配置不在隔离测试目录内，或路径已改变。");
+                if (checked.empty() || (options.testMode &&
+                    (IsolatedDestination(options.dataRoot, original).empty() ||
+                     IsolatedDestination(options.dataRoot, options.configPath).empty())))
+                    throw std::runtime_error(u8"图库路径无效或已改变。");
                 auto request = Request(ProductAction::Relocate);
                 request.text = checked.wstring();
                 return Result(kRelocateOperation, backend->Execute(request));
@@ -585,17 +600,18 @@ struct ProductUi::State {
         const auto nextDate = request.action == ProductAction::BrowseSelect ? request.text : date;
         if (!runner.Submit(operation, [this, request = std::move(request), date = std::move(date), operation,
                                        directory = snapshot.galleryDir, details = std::move(exportDetails)]() {
-            if (IsolatedDestination(options.dataRoot, directory).empty() ||
-                IsolatedDestination(options.dataRoot, options.configPath).empty())
+            if (options.testMode && (IsolatedDestination(options.dataRoot, directory).empty() ||
+                IsolatedDestination(options.dataRoot, options.configPath).empty()))
                 throw std::runtime_error(u8"当前壁纸库或配置不在隔离测试目录内，或路径已改变。");
             fs::path detailsPath;
             if (operation == kExportOperation) {
-                const auto path = IsolatedDestination(options.dataRoot, request.text);
+                const auto path = options.testMode ? IsolatedDestination(options.dataRoot, request.text)
+                                                   : fs::path(request.text).lexically_normal();
                 if (path.empty() || IsWithin(directory, path))
-                    throw std::runtime_error(u8"导出目标不在隔离测试目录内，或与当前壁纸库冲突。");
+                    throw std::runtime_error(u8"导出路径无效或与当前壁纸库冲突。");
                 if (request.action == ProductAction::ExportAllSizes) {
                     const auto checkFile = [&](const fs::path& file) {
-                        if (IsolatedDestination(options.dataRoot, file.wstring()).empty() || IsWithin(directory, file))
+                        if ((options.testMode && IsolatedDestination(options.dataRoot, file.wstring()).empty()) || IsWithin(directory, file))
                             throw std::runtime_error(u8"导出目标中包含无效的文件路径。");
                         if (GetFileAttributesW(file.c_str()) != INVALID_FILE_ATTRIBUTES)
                             throw std::runtime_error(u8"导出目录已有同名文件，请另选目录。");
@@ -640,9 +656,11 @@ struct ProductUi::State {
         const auto path = PickPath(owner, L"请选择壁纸导出到的位置", options.dataRoot,
             allSizes ? std::wstring() : SuggestedJpeg(record, size));
         if (path.empty() || closing || relocateBusy || snapshot.galleryDir != directory) return;
-        const auto checked = IsolatedDestination(options.dataRoot, path);
+        const auto checked = options.testMode ? IsolatedDestination(options.dataRoot, path) : fs::path(path).lexically_normal();
         if (checked.empty() || IsWithin(snapshot.galleryDir, checked)) {
-            MessageBoxW(owner, L"请选择隔离测试目录内、当前壁纸库之外的导出位置。", L"导出壁纸", MB_OK | MB_ICONWARNING);
+            const auto* message = options.testMode ? L"请选择隔离测试目录内、当前壁纸库之外的导出位置。"
+                                                   : L"请选择当前壁纸库之外的导出位置。";
+            MessageBoxW(owner, message, L"导出壁纸", MB_OK | MB_ICONWARNING);
             return;
         }
         if (!allSizes && GetFileAttributesW(checked.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -837,7 +855,7 @@ struct ProductUi::State {
         HWND owner=ui->WindowHandle(event.window);
         if(address&&CopyText(owner,address))MessageBoxW(owner,L"快捷指令链接已经复制到剪贴板，快去分享给苹果设备吧！",
             L"快捷指令链接已复制",MB_OK|MB_ICONINFORMATION);
-        if(event.control==L"按钮EX4")OpenPage(owner,L"https://mp.weixin.qq.com/s?__biz=Mzg4NDYyOTA2NA==&mid=2247486223&idx=1&sn=1c0267ff6f47274d8e67272cd2cba775");
+        if(event.control==L"按钮EX4")OpenPage(owner,L"https://mp.weixin.qq.com/s?__biz=Mzg4NDYyOTA2NA==&mid=2247486223&idx=1&sn=1c0267ff6f47274d8e67272cd2cba775&chksm=cfb40028f8c3893eb8461cee7fa72242b12813f4d84b365c1bb1c82489e4e226b1f1a6b828e7#rd");
     }
 
     bool themeBusy = false;

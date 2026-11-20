@@ -17,9 +17,9 @@ fixture with at least two dated pairs for theme export. Packages stay in the
 test data root and are never installed. The source, relocation and iOS checks
 only open and close their windows.
 
-Manual follow-up with disposable data and --test-mode: check main X hides to
-tray, restore that instance, then exit from Settings. Check large-image rendering
-and sizing separately. Do not operate startup controls or apply a desktop wallpaper.
+The tray test sends the shell's restore notification to the same hidden instance.
+Check the physical tray icon and large-image rendering separately. Do not operate
+startup controls or apply a desktop wallpaper.
 #>
 [CmdletBinding()]
 param(
@@ -264,6 +264,16 @@ namespace StoutWallVerification {
         public void CloseChild(IntPtr child, IntPtr main) {
             if (child == main || Class(child) != "StoutWallOriginalWindow") throw new InvalidOperationException("Not a product child window");
             Post(child, 0x0010, 0, IntPtr.Zero); // WM_CLOSE
+        }
+        public void HideMainToTray(IntPtr main) {
+            if (!Visible(main) || Owner(main) != IntPtr.Zero || Class(main) != "StoutWallOriginalWindow")
+                throw new InvalidOperationException("Expected visible product main window");
+            Post(main, 0x0010, 0, IntPtr.Zero); // WM_CLOSE
+        }
+        public void SimulateTrayRestore(IntPtr main) {
+            if (Visible(main) || Owner(main) != IntPtr.Zero || Class(main) != "StoutWallOriginalWindow")
+                throw new InvalidOperationException("Expected hidden product main window");
+            Post(main, 0x8000 + 31, 1, new IntPtr(0x0202)); // WM_LBUTTONUP on tray icon 1
         }
 
         // Tab pointer messages are not marshalled. The product is x86, so write
@@ -833,6 +843,11 @@ try {
                 }
                 Close-Child $reopened.Window '查看/管理壁纸库'
                 Write-Host 'PASS: Gallery closes and reopens with its rows and favorite state.'
+                $session.HideMainToTray($main)
+                $null = Wait-For 'main window hidden without exiting' { $session.Alive($main) -and !$session.Visible($main) }
+                $session.SimulateTrayRestore($main)
+                $null = Wait-For 'main window restored by tray notification' { $session.Visible($main) -and $session.Enabled($main) }
+                Write-Host 'PASS: Main X hides to tray and the tray notification restores the same window.'
             }
             $exitAttempted = $true
             Quit-Product
@@ -855,6 +870,5 @@ try {
     [Console]::Error.WriteLine("FAIL: $_")
 } finally {
     if ($dataRoot) { Write-Host "Retained test data: $dataRoot" }
-    Write-Host 'Manual: main X hides to tray, restore the same test instance, then exit from Settings.'
 }
 exit $status

@@ -44,11 +44,20 @@ cl %COMMON% /Fo"%OBJ%\Assets.obj" /c "%ROOT%src\Assets.cpp"
 if errorlevel 1 exit /b 23
 link /nologo /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /OUT:"%OUT%\StoutWall.exe" "%OBJ%\ProductBackend.obj" "%OBJ%\ProductUi.obj" "%OBJ%\ReplicaUi.obj" "%OBJ%\TaskRunner.obj" "%OBJ%\Assets.obj" "%OBJ%\app.res" "%OBJ%\network.lib" "%OBJ%\platform.lib" "%OBJ%\library.lib" comctl32.lib d2d1.lib dwrite.lib windowscodecs.lib shell32.lib ole32.lib user32.lib gdi32.lib winhttp.lib advapi32.lib gdi32.lib oleaut32.lib
 if errorlevel 1 exit /b 24
-echo [6/6] Staging gallery and original runtime dependencies
+echo [6/6] Staging gallery, original runtime data and static-CRT 7za.exe
 copy /Y "%ROOT%dependencies\gallery.dll" "%OUT%\gallery.dll" >nul
 if errorlevel 1 exit /b 30
-for %%F in (7z.dll 7za.exe cabarc.exe cabinet.dll ForTheme.EDT GalleryBase.EDT) do if exist "%RUNTIME%\%%F" copy /Y "%RUNTIME%\%%F" "%OUT%\%%F" >nul
-if errorlevel 1 exit /b 31
+for %%F in (cabarc.exe ForTheme.EDT GalleryBase.EDT) do (
+    copy /Y "%RUNTIME%\%%F" "%OUT%\%%F" >nul
+    if errorlevel 1 exit /b 31
+)
+call "%ROOT%tools\build_7za.cmd" "%OUT%"
+if errorlevel 1 exit /b 32
+rem Remove dependencies staged by older builds; neither is loaded by the product.
+for %%F in (7z.dll cabinet.dll) do if exist "%OUT%\%%F" (
+    del /q "%OUT%\%%F"
+    if exist "%OUT%\%%F" exit /b 33
+)
 echo Build succeeded: %OUT%\StoutWall.exe
 echo Static CRT: /MT for EXE and all code DLLs; assets.dll is resource-only.
 exit /b 0

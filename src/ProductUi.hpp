@@ -9,8 +9,7 @@
 namespace stoutwall {
 
 struct ProductOptions {
-    // Explicitly opt into desktop changes with --allow-wallpaper.
-    bool testMode = true;
+    bool testMode = false;
     bool uiTest = false;
     bool quiet = false;
     std::wstring dataRoot;

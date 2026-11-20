@@ -148,6 +148,9 @@ SWL_API int32_t __stdcall Library_ExportW(const wchar_t* d,int32_t size,const wc
 });}
 SWL_API int32_t __stdcall Library_ImportW(const SWL_Record* r,const wchar_t* const* images){return Guard([&]()->int32_t{
     Thread();if(!r||!images) Fail(L"入库参数为空。",-1);
+    for (int i = 0; i < 5; ++i) {
+        if (!images[i] || !*images[i]) Fail(L"入库图片缺失。",-1);
+    }
     fs::path pending=directory/L"work";std::error_code workError;
     fs::create_directories(pending,workError);
     if(workError) Fail(L"无法创建图库导入暂存目录："+pending.wstring()+L"（系统错误 "+std::to_wstring(workError.value())+L"）",-7);
@@ -159,11 +162,15 @@ SWL_API int32_t __stdcall Library_ImportW(const SWL_Record* r,const wchar_t* con
     fs::path manifest=pending/(std::wstring(L"import-")+r->date+L"-"+
         std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L".ini");
     auto path=Ansi(manifest.wstring()),date=Ansi(r->date);
+    struct RemoveManifest {
+        const fs::path& path;
+        ~RemoveManifest() { DeleteFileW(path.c_str()); }
+    } removeManifest{manifest};
     auto put=[&](const char* group,const char* key,const std::wstring& s){auto v=Ansi(s);if(!WritePrivateProfileStringA(group,key,v.c_str(),path.c_str())) Fail(L"写入图库清单失败。",-7);};
     put("Wallpaper","urlbase",r->urlbase);put("Wallpaper","title",r->title);put("Wallpaper","description",r->description);put("Wallpaper","author",r->author);put("Wallpaper","copyrightlink",r->link);
     static const char* sizeNames[]={"UHD","1920x1200","1920x1080","1024x768","1080x1920"};
-    for(int i=0;i<5;++i){if(!images[i]) Fail(L"入库图片缺失。",-1);put("Images",sizeNames[i],images[i]);}
-    int rc=apiImport(date.c_str(),path.c_str());std::error_code ignored;fs::remove(manifest,ignored);
+    for(int i=0;i<5;++i) put("Images",sizeNames[i],images[i]);
+    int rc=apiImport(date.c_str(),path.c_str());
     Check(rc,L"五尺寸壁纸入库（定长字段不会截断）");return rc;
 });}
 SWL_API int32_t __stdcall Library_Delete(const wchar_t* d){return Guard([&]()->int32_t{Thread();auto a=Ansi(d?d:L"");int rc=apiDelete(a.c_str());Check(rc,L"删除壁纸");return rc;});}
@@ -174,26 +181,72 @@ SWL_API int32_t __stdcall Library_RelocateW(const wchar_t* destination){return G
     if(_wcsicmp(dest.c_str(),old.c_str())==0) Fail(L"已选的是当前的壁纸库目录。",-1);
     auto oldText=old.wstring()+L"\\",newText=dest.wstring()+L"\\";
     if(newText.size()>oldText.size()&&_wcsnicmp(newText.c_str(),oldText.c_str(),oldText.size())==0) Fail(L"不能将图库迁移到自身的子目录。",-1);
+    for (auto ancestor = dest; !ancestor.empty();) {
+        if (fs::exists(ancestor) && fs::equivalent(ancestor, old))
+            Fail(L"不能将图库迁移到自身或其子目录。",-1);
+        const auto parent = ancestor.parent_path();
+        if (parent == ancestor) break;
+        ancestor = parent;
+    }
+    fs::path staging;
+    std::vector<fs::path> published;
     Check(apiClose(),L"关闭原壁纸库");opened=false;
     try {
         bool useExisting=false;auto target=Ansi(dest.wstring());
         if(fs::exists(dest/L"Stout_WallGallery_Index.DDT")&&apiOpen(target.c_str(),1)==0){
+            opened=true;
             useExisting=true;int n=apiCount(0);if(n<0) useExisting=false;
             for(int i=1;useExisting&&i<=n;++i){auto d=Date(i,0);if(apiCheck(d.c_str(),0)<0) useExisting=false;}
-            apiClose();
+            Check(apiClose(),L"关闭待检查壁纸库");opened=false;
         }
         if(!useExisting){
             fs::create_directories(dest);
             // An incomplete destination is preserved; never overwrite arbitrary existing data.
-            for(const auto& e:fs::directory_iterator(old)){if(!e.is_regular_file())continue;auto p=dest/e.path().filename();
-                if(fs::exists(p)) Fail(L"目标含不完整图库或同名文件，请先选择空目录。",-8);
+            std::vector<fs::path> files;
+            const fs::path index = L"Stout_WallGallery_Index.DDT";
+            for (const auto& e : fs::directory_iterator(old)) {
+                if (!e.is_regular_file()) continue;
+                const auto name = e.path().filename();
+                if (fs::exists(fs::symlink_status(dest / name)))
+                    Fail(L"目标含不完整图库或同名文件，请先选择空目录。",-8);
+                if (_wcsicmp(name.c_str(), index.c_str()) != 0) files.push_back(name);
             }
-            for(const auto& e:fs::directory_iterator(old))if(e.is_regular_file())fs::copy_file(e.path(),dest/e.path().filename());
+            files.push_back(index);
+            published.reserve(files.size());
+            auto candidate = dest / (L".stoutwall-migrate-" + std::to_wstring(GetCurrentProcessId()) +
+                                     L"-" + std::to_wstring(GetTickCount64()));
+            if (!fs::create_directory(candidate)) Fail(L"目标已有同名迁移暂存目录。",-8);
+            staging = std::move(candidate);
+            for (const auto& name : files) fs::copy_file(old / name, staging / name);
+            for (const auto& name : files) {
+                auto path = dest / name;
+                if (!MoveFileExW((staging / name).c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH))
+                    Fail(L"无法将暂存文件移入目标图库（系统错误 " + std::to_wstring(GetLastError()) + L"）。",-7);
+                published.push_back(std::move(path));
+            }
+            fs::remove(staging);
+            staging.clear();
         }
         Check(apiOpen(target.c_str(),0),L"打开新壁纸库");opened=true;
         int n=apiCount(0);Check(n,L"检查新图库");for(int i=1;i<=n;++i){auto d=Date(i,0);Check(apiCheck(d.c_str(),0),L"检查迁移图片");}
         directory=dest;return 0;
-    }catch(...){if(opened)apiClose();auto p=Ansi(old.wstring());opened=apiOpen(p.c_str(),0)==0;directory=old;throw;}
+    } catch (...) {
+        if (opened) apiClose();
+        std::error_code cleanupError, ignored;
+        for (const auto& file : published) {
+            fs::remove(file, ignored);
+            if (ignored) cleanupError = ignored;
+        }
+        if (!staging.empty()) {
+            fs::remove_all(staging, ignored);
+            if (ignored) cleanupError = ignored;
+        }
+        auto p = Ansi(old.wstring());
+        opened = apiOpen(p.c_str(), 0) == 0;
+        if (!opened) Fail(L"迁移失败，且无法重新打开原壁纸库。",-7);
+        if (cleanupError) Fail(L"迁移失败，且无法清理目标位置的复制文件。",-7);
+        throw;
+    }
 });}
 SWL_API uint64_t __stdcall Library_Bytes(){uint64_t total=0;Guard([&]()->int32_t{Thread();for(const auto& e:fs::directory_iterator(directory))if(e.is_regular_file())total+=e.file_size();return 0;});return total;}
 SWL_API int32_t __stdcall Library_LastErrorW(wchar_t* b,int32_t n){int32_t need=static_cast<int32_t>(lastError.size()+1);if(b&&n>=need)memcpy(b,lastError.c_str(),static_cast<size_t>(need)*sizeof(wchar_t));return need;}
