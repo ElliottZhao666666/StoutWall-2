@@ -1,6 +1,8 @@
 # Visual Studio and compiler outputs
 .vs/
 bin/
+build/
+runtime/
 obj/
 Debug/
 Release/
@@ -9,6 +11,8 @@ Release/
 *.pdb
 *.ilk
 *.obj
+/*.exp
+/*.lib
 
 # Test data and local runtime material
 test-data/
@@ -16,3 +20,6 @@ runtime/
 local.settings.json
 *.DDT
 *.EDT
+/resources/*.res
+/tools/__pycache__/
+/resources/assets.dll

@@ -1,0 +1,2354 @@
+{
+  "windows": [
+    {
+      "name": "_启动窗口",
+      "title": "胖哥每日壁纸",
+      "width": 718,
+      "height": 353,
+      "minimize": false,
+      "white": false
+    },
+    {
+      "name": "iOS窗口",
+      "title": "胖哥每日壁纸 iOS版",
+      "width": 597,
+      "height": 463,
+      "minimize": true,
+      "white": false
+    },
+    {
+      "name": "七日壁纸窗口",
+      "title": "",
+      "width": 736,
+      "height": 474,
+      "minimize": true,
+      "white": false
+    },
+    {
+      "name": "主题包窗口",
+      "title": "导出为Windows主题包",
+      "width": 434,
+      "height": 641,
+      "minimize": true,
+      "white": false
+    },
+    {
+      "name": "壁纸导出主题自选窗口",
+      "title": "",
+      "width": 424,
+      "height": 341,
+      "minimize": true,
+      "white": false
+    },
+    {
+      "name": "壁纸来源窗口",
+      "title": "选择新壁纸获取来源...",
+      "width": 355,
+      "height": 258,
+      "minimize": true,
+      "white": true
+    },
+    {
+      "name": "大图窗口",
+      "title": "查看大图",
+      "width": 380,
+      "height": 250,
+      "minimize": true,
+      "white": true
+    },
+    {
+      "name": "库管理窗口",
+      "title": "",
+      "width": 736,
+      "height": 520,
+      "minimize": true,
+      "white": false
+    },
+    {
+      "name": "库迁移窗口",
+      "title": "请指定新的壁纸库位置:",
+      "width": 568,
+      "height": 160,
+      "minimize": false,
+      "white": true
+    }
+  ],
+  "tabs": [
+    {
+      "window": "_启动窗口",
+      "control": "选择夹EX1",
+      "index": 0,
+      "title": "当前壁纸"
+    },
+    {
+      "window": "_启动窗口",
+      "control": "选择夹EX1",
+      "index": 1,
+      "title": "运行模式"
+    },
+    {
+      "window": "_启动窗口",
+      "control": "选择夹EX1",
+      "index": 2,
+      "title": "设置"
+    },
+    {
+      "window": "_启动窗口",
+      "control": "选择夹EX1",
+      "index": 3,
+      "title": "壁纸库"
+    },
+    {
+      "window": "_启动窗口",
+      "control": "选择夹EX1",
+      "index": 4,
+      "title": "更多内容"
+    }
+  ],
+  "controls": [
+    {
+      "window": "_启动窗口",
+      "name": "选择夹EX1",
+      "type": "Lib3.3",
+      "bounds": [
+        4,
+        36,
+        709,
+        312
+      ],
+      "caption": "更多内容",
+      "visible": false,
+      "parent": "_启动窗口",
+      "events": "",
+      "extensionBytes": 3964,
+      "page": -1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX14",
+      "type": "Lib3.6",
+      "bounds": [
+        64,
+        131,
+        106,
+        40
+      ],
+      "caption": "壁纸库网站",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX14_鼠标左键单击",
+      "extensionBytes": 598,
+      "page": 3
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX13",
+      "type": "Lib3.6",
+      "bounds": [
+        64,
+        232,
+        98,
+        40
+      ],
+      "caption": "七日壁纸",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 596,
+      "page": -2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX12",
+      "type": "Lib3.6",
+      "bounds": [
+        529,
+        64,
+        120,
+        40
+      ],
+      "caption": "选择壁纸源...",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX12_鼠标左键单击",
+      "extensionBytes": 604,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "超级按钮EX2",
+      "type": "Lib3.8",
+      "bounds": [
+        288,
+        109,
+        112,
+        32
+      ],
+      "caption": "bing.com",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_超级按钮EX2_鼠标左键单击",
+      "extensionBytes": 45693,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片框EX5",
+      "type": "Lib3.4",
+      "bounds": [
+        318,
+        55,
+        55,
+        55
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片框EX5_鼠标左键单击",
+      "extensionBytes": 11680,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "编辑框EX3",
+      "type": "Lib3.15",
+      "bounds": [
+        410,
+        64,
+        273,
+        229
+      ],
+      "caption": "【壁纸版权说明】本软件所有壁纸均来自必应官网(www.bing.com)，所有壁纸图片版权均归必应以及图片原作者所有，本软件仅收集以方便应用于桌面壁纸欣赏，若您需要商用壁纸图片，则请联系原作者以获得使用授权！\r\n\r\n【软件介绍】“胖哥每日壁纸”是由月半菌独立开发的一款壁纸软件。本软件可以自动收集必应中国每天更新的背景图并应用于桌面壁纸，支持4K/1920x1200/1920x1080/1024x768/1080x1920五种不同比例规格。本软件支持每日一图、已收集壁纸库轮播、壁纸收藏等功能，并且可以直接将壁纸库导出为Windows主题包。本软件绝对无毒，完全绿色，可后台运行，可开机自启，您可长期放心使用，让电脑桌面每天都是大片！\r\n\r\n如果您喜欢本软件，欢迎您留言与我交流，提出意见与建议，如果软件运行过程中遇到问题，希望您能及时反馈给我。点击“反馈/建议”按钮即可看到联系方法啦！\r\n\r\n月半菌 2025.9\r\n",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 8134,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX11",
+      "type": "Lib3.6",
+      "bounds": [
+        288,
+        152,
+        112,
+        32
+      ],
+      "caption": "反馈/建议",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX11_鼠标左键单击",
+      "extensionBytes": 598,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX10",
+      "type": "Lib3.6",
+      "bounds": [
+        151,
+        152,
+        112,
+        32
+      ],
+      "caption": "帮助/介绍内容",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX10_鼠标左键单击",
+      "extensionBytes": 602,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片框EX4",
+      "type": "Lib3.4",
+      "bounds": [
+        16,
+        192,
+        102,
+        102
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片框EX4_鼠标左键单击",
+      "extensionBytes": 71862,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片框EX3",
+      "type": "Lib3.4",
+      "bounds": [
+        127,
+        192,
+        277,
+        102
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片框EX3_鼠标左键单击",
+      "extensionBytes": 4268839,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片框EX2",
+      "type": "Lib3.4",
+      "bounds": [
+        18,
+        56,
+        90,
+        90
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 11214,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX9",
+      "type": "Lib3.5",
+      "bounds": [
+        121,
+        72,
+        161,
+        32
+      ],
+      "caption": "胖哥每日壁纸",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 180,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX10",
+      "type": "Lib3.5",
+      "bounds": [
+        124,
+        112,
+        106,
+        24
+      ],
+      "caption": "V1.1.0.2509",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 190,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX4",
+      "type": "Lib3.6",
+      "bounds": [
+        17,
+        152,
+        112,
+        32
+      ],
+      "caption": "获取 iOS 版",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX4_鼠标左键单击",
+      "extensionBytes": 604,
+      "page": 4
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX9",
+      "type": "Lib3.6",
+      "bounds": [
+        528,
+        120,
+        122,
+        40
+      ],
+      "caption": "重置随机顺序",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX9_鼠标左键单击",
+      "extensionBytes": 600,
+      "page": -2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX8",
+      "type": "Lib3.6",
+      "bounds": [
+        64,
+        181,
+        217,
+        40
+      ],
+      "caption": "导出为Windows 主题包",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX8_鼠标左键单击",
+      "extensionBytes": 616,
+      "page": 3
+    },
+    {
+      "window": "_启动窗口",
+      "name": "时钟1",
+      "type": "时钟",
+      "bounds": [
+        354,
+        -40,
+        40,
+        48
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_时钟1_周期事件",
+      "extensionBytes": 0,
+      "page": -2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX7",
+      "type": "Lib3.6",
+      "bounds": [
+        402,
+        240,
+        118,
+        40
+      ],
+      "caption": "刷新今日壁纸",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX7_鼠标左键单击",
+      "extensionBytes": 600,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX6",
+      "type": "Lib3.6",
+      "bounds": [
+        178,
+        131,
+        103,
+        40
+      ],
+      "caption": "库合集下载",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX6_鼠标左键单击",
+      "extensionBytes": 598,
+      "page": 3
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX5",
+      "type": "Lib3.6",
+      "bounds": [
+        170,
+        233,
+        111,
+        40
+      ],
+      "caption": "清除所有收藏",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX5_鼠标左键单击",
+      "extensionBytes": 600,
+      "page": 3
+    },
+    {
+      "window": "_启动窗口",
+      "name": "编辑框EX2",
+      "type": "Lib3.15",
+      "bounds": [
+        328,
+        81,
+        312,
+        192
+      ],
+      "caption": "【壁纸库信息】\r\n\r\n壁纸库位置：D:\\114514\r\n大小：114MB\r\n壁纸数量：114\r\n收藏数量：514\r\n自动保存：已打开",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 7444,
+      "page": 3
+    },
+    {
+      "window": "_启动窗口",
+      "name": "超级按钮EX1",
+      "type": "Lib3.8",
+      "bounds": [
+        65,
+        81,
+        216,
+        40
+      ],
+      "caption": "查看/管理壁纸库",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_超级按钮EX1_鼠标左键单击",
+      "extensionBytes": 1011,
+      "page": 3
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX3",
+      "type": "Lib3.6",
+      "bounds": [
+        528,
+        240,
+        122,
+        40
+      ],
+      "caption": "退出软件",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX3_鼠标左键单击",
+      "extensionBytes": 596,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX2",
+      "type": "Lib3.6",
+      "bounds": [
+        264,
+        246,
+        98,
+        32
+      ],
+      "caption": "自启检查",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX2_鼠标左键单击",
+      "extensionBytes": 596,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "选择框EX3",
+      "type": "Lib3.11",
+      "bounds": [
+        42,
+        240,
+        312,
+        40
+      ],
+      "caption": "开机自动启动（推荐打开）",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_选择框EX3_选中状态改变",
+      "extensionBytes": 2459,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX8",
+      "type": "Lib3.5",
+      "bounds": [
+        400,
+        182,
+        282,
+        40
+      ],
+      "caption": "注意：保存到壁纸库时会保存所有尺寸图片。本项请依您显示器的宽高比例选择。",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_标签EX8_鼠标左键单击",
+      "extensionBytes": 240,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "选择框EX2",
+      "type": "Lib3.11",
+      "bounds": [
+        403,
+        124,
+        111,
+        32
+      ],
+      "caption": "乱序更换",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_选择框EX2_选中状态改变",
+      "extensionBytes": 2443,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "组合框EX2",
+      "type": "Lib3.16",
+      "bounds": [
+        175,
+        184,
+        187,
+        32
+      ],
+      "caption": "(竖屏9:16)1080x1920",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_组合框EX2_内容被改变",
+      "extensionBytes": 8147,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX7",
+      "type": "Lib3.5",
+      "bounds": [
+        41,
+        187,
+        129,
+        24
+      ],
+      "caption": "壁纸应用尺寸：",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 182,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX6",
+      "type": "Lib3.5",
+      "bounds": [
+        41,
+        128,
+        129,
+        24
+      ],
+      "caption": "壁纸更换频率：",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 182,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "组合框EX1",
+      "type": "Lib3.16",
+      "bounds": [
+        175,
+        125,
+        187,
+        32
+      ],
+      "caption": "45分钟",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_组合框EX1_内容被改变",
+      "extensionBytes": 8925,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "按钮EX1",
+      "type": "Lib3.6",
+      "bounds": [
+        402,
+        64,
+        120,
+        40
+      ],
+      "caption": "壁纸库位置...",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_按钮EX1_鼠标左键单击",
+      "extensionBytes": 604,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "选择框EX1",
+      "type": "Lib3.11",
+      "bounds": [
+        42,
+        64,
+        312,
+        40
+      ],
+      "caption": "自动保存每日一图到壁纸库",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_选择框EX1_选中状态改变",
+      "extensionBytes": 2459,
+      "page": 2
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片按钮EX5",
+      "type": "Lib3.7",
+      "bounds": [
+        182,
+        264,
+        28,
+        28
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片按钮EX5_鼠标位置移动;窗口程序集_启动窗口::_图片按钮EX5_鼠标左键单击",
+      "extensionBytes": 4747,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "编辑框EX1",
+      "type": "Lib3.15",
+      "bounds": [
+        250,
+        70,
+        416,
+        200
+      ],
+      "caption": "【运行模式说明】\r\n\r\n1.每日一图模式：软件运行时会定期自动检测并更换壁纸为当天的必应今日美图。壁纸更换频率为一天一次，若不开启“自动保存每日一图到壁纸库”，则每天的壁纸不会被保存，下次更换时会被覆盖。\r\n\r\n2.壁纸库模式：该模式自动轮播壁纸库内已保存的必应壁纸（壁纸库内初始预存一些壁纸），您可自由调整更换频率、顺序等。\r\n\r\n3.收藏模式：轮播您收藏的必应壁纸，若无收藏则不可用，您可自由调整更换频率。\r\n\r\n4.七日壁纸模式：该模式自动获取近7日的必应美图轮播展示，您可自由调整更换频率、顺序等。",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 7818,
+      "page": 1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "分组框EX1",
+      "type": "Lib3.2",
+      "bounds": [
+        18,
+        70,
+        208,
+        200
+      ],
+      "caption": "选择运行模式",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 204,
+      "page": 1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "单选框EX4",
+      "type": "Lib3.10",
+      "bounds": [
+        40,
+        152,
+        136,
+        32
+      ],
+      "caption": "7日壁纸模式",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "",
+      "extensionBytes": 2710,
+      "page": -1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "单选框EX1",
+      "type": "Lib3.10",
+      "bounds": [
+        40,
+        32,
+        136,
+        32
+      ],
+      "caption": "每日一图模式",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_启动窗口::_单选框EX1_选中状态改变",
+      "extensionBytes": 2710,
+      "page": -1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "单选框EX3",
+      "type": "Lib3.10",
+      "bounds": [
+        40,
+        112,
+        136,
+        32
+      ],
+      "caption": "收藏模式",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_启动窗口::_单选框EX3_选中状态改变",
+      "extensionBytes": 2706,
+      "page": -1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "单选框EX2",
+      "type": "Lib3.10",
+      "bounds": [
+        40,
+        72,
+        136,
+        32
+      ],
+      "caption": "壁纸库模式",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_启动窗口::_单选框EX2_选中状态改变",
+      "extensionBytes": 2708,
+      "page": -1
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片按钮EX4",
+      "type": "Lib3.7",
+      "bounds": [
+        332,
+        261,
+        32,
+        32
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片按钮EX4_鼠标左键单击;窗口程序集_启动窗口::_图片按钮EX4_鼠标位置移动",
+      "extensionBytes": 3709,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片按钮EX3",
+      "type": "Lib3.7",
+      "bounds": [
+        479,
+        263,
+        28,
+        28
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片按钮EX3_鼠标左键单击;窗口程序集_启动窗口::_图片按钮EX3_鼠标位置移动",
+      "extensionBytes": 5996,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片按钮EX2",
+      "type": "Lib3.7",
+      "bounds": [
+        611,
+        258,
+        40,
+        40
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片按钮EX2_鼠标左键单击;窗口程序集_启动窗口::_图片按钮EX2_鼠标位置移动",
+      "extensionBytes": 2401,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片按钮EX1",
+      "type": "Lib3.7",
+      "bounds": [
+        34,
+        258,
+        40,
+        40
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "窗口程序集_启动窗口::_图片按钮EX1_鼠标左键单击;窗口程序集_启动窗口::_图片按钮EX1_鼠标位置移动",
+      "extensionBytes": 2384,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX5",
+      "type": "Lib3.5",
+      "bounds": [
+        352,
+        223,
+        74,
+        24
+      ],
+      "caption": "2023.08.01",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 188,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX4",
+      "type": "Lib3.5",
+      "bounds": [
+        428,
+        223,
+        98,
+        24
+      ],
+      "caption": "3840x2160",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 186,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX3",
+      "type": "Lib3.5",
+      "bounds": [
+        352,
+        199,
+        298,
+        24
+      ],
+      "caption": "(C) Amazing Aerial Premium/Shutterstock",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 246,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX2",
+      "type": "Lib3.5",
+      "bounds": [
+        353,
+        104,
+        297,
+        80
+      ],
+      "caption": "圆顶礁国家公园的砂岩山丘，犹他州，美国",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 206,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "标签EX1",
+      "type": "Lib3.5",
+      "bounds": [
+        354,
+        64,
+        336,
+        32
+      ],
+      "caption": "大自然色调的调色板",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 186,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "图片框EX1",
+      "type": "Lib3.4",
+      "bounds": [
+        26,
+        64,
+        315,
+        179
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "选择夹EX1",
+      "events": "",
+      "extensionBytes": 3423964,
+      "page": 0
+    },
+    {
+      "window": "_启动窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "胖哥每日壁纸",
+      "visible": false,
+      "parent": "_启动窗口",
+      "events": "",
+      "extensionBytes": 17702,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "按钮EX4",
+      "type": "Lib3.6",
+      "bounds": [
+        479,
+        394,
+        88,
+        32
+      ],
+      "caption": "点此查看",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "窗口程序集_iOS窗口::_按钮EX4_鼠标左键单击",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "标签EX3",
+      "type": "Lib3.5",
+      "bounds": [
+        24,
+        398,
+        544,
+        32
+      ],
+      "caption": "关于本快捷指令详细的使用方法和自动换壁纸的设置方法，请",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "",
+      "extensionBytes": 222,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "标签EX2",
+      "type": "Lib3.5",
+      "bounds": [
+        348,
+        345,
+        183,
+        24
+      ],
+      "caption": "适用于iPad, Mac(横屏)",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "",
+      "extensionBytes": 200,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "标签EX1",
+      "type": "Lib3.5",
+      "bounds": [
+        67,
+        345,
+        168,
+        24
+      ],
+      "caption": "适用于iPhone (竖屏)",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "",
+      "extensionBytes": 196,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "图片框EX1",
+      "type": "Lib3.4",
+      "bounds": [
+        344,
+        145,
+        190,
+        190
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "窗口程序集_iOS窗口::_图片框EX1_鼠标左键单击",
+      "extensionBytes": 6968,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "图片框EX2",
+      "type": "Lib3.4",
+      "bounds": [
+        56,
+        145,
+        190,
+        190
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "窗口程序集_iOS窗口::_图片框EX2_鼠标左键单击",
+      "extensionBytes": 6999,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "标签EX6",
+      "type": "Lib3.5",
+      "bounds": [
+        24,
+        57,
+        544,
+        72
+      ],
+      "caption": "使用 iPhone 或 iPad 扫描下列对应二维码，或者点击对应的二维码复制链接给 iPhone, iPad 或 Mac。这些设备打开链接后即可直接添加“胖哥每日必应壁纸”快捷指令（推荐使用 iOS / iPadOS 16 或更高版本系统）。",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "",
+      "extensionBytes": 412,
+      "page": -1
+    },
+    {
+      "window": "iOS窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "胖哥每日壁纸 iOS版",
+      "visible": false,
+      "parent": "iOS窗口",
+      "events": "",
+      "extensionBytes": 17712,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "按钮EX3",
+      "type": "Lib3.6",
+      "bounds": [
+        24,
+        416,
+        84,
+        40
+      ],
+      "caption": "设为壁纸",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "按钮EX6",
+      "type": "Lib3.6",
+      "bounds": [
+        117,
+        417,
+        84,
+        40
+      ],
+      "caption": "刷新",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 592,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "按钮EX1",
+      "type": "Lib3.6",
+      "bounds": [
+        117,
+        371,
+        84,
+        40
+      ],
+      "caption": "收藏这张",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "组合框EX2",
+      "type": "Lib3.16",
+      "bounds": [
+        24,
+        334,
+        176,
+        32
+      ],
+      "caption": "(4K16:9)3840x2160",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 8141,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "按钮EX2",
+      "type": "Lib3.6",
+      "bounds": [
+        24,
+        371,
+        84,
+        40
+      ],
+      "caption": "保存这张",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "编辑框EX1",
+      "type": "Lib3.15",
+      "bounds": [
+        216,
+        334,
+        496,
+        122
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 7310,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "图片框EX1",
+      "type": "Lib3.4",
+      "bounds": [
+        216,
+        48,
+        496,
+        280
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 541,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "通用对话框1",
+      "type": "通用对话框",
+      "bounds": [
+        288,
+        72,
+        56,
+        48
+      ],
+      "caption": "请选择壁纸导出到的位置",
+      "visible": false,
+      "parent": "图片框EX1",
+      "events": "",
+      "extensionBytes": 140,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "列表框EX1",
+      "type": "Lib3.18",
+      "bounds": [
+        24,
+        48,
+        176,
+        280
+      ],
+      "caption": "列表项目示例",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 9697,
+      "page": -1
+    },
+    {
+      "window": "七日壁纸窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "胖哥每日壁纸 - 七日壁纸查看（单击图片可全屏欣赏）",
+      "visible": false,
+      "parent": "七日壁纸窗口",
+      "events": "",
+      "extensionBytes": 17742,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "进度条EX1",
+      "type": "Lib3.12",
+      "bounds": [
+        8,
+        592,
+        248,
+        32
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "",
+      "extensionBytes": 1156,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "按钮EX1",
+      "type": "Lib3.6",
+      "bounds": [
+        264,
+        590,
+        160,
+        39
+      ],
+      "caption": "开始导出",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "窗口程序集_主题包窗口::_按钮EX1_鼠标左键单击",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "分组框EX4",
+      "type": "Lib3.2",
+      "bounds": [
+        8,
+        463,
+        416,
+        120
+      ],
+      "caption": "4.主题文件信息",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "",
+      "extensionBytes": 208,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "编辑框EX1",
+      "type": "Lib3.15",
+      "bounds": [
+        130,
+        31,
+        206,
+        26
+      ],
+      "caption": "必应每日壁纸合集",
+      "visible": false,
+      "parent": "分组框EX4",
+      "events": "",
+      "extensionBytes": 7252,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "按钮EX2",
+      "type": "Lib3.6",
+      "bounds": [
+        344,
+        67,
+        64,
+        32
+      ],
+      "caption": "浏览...",
+      "visible": false,
+      "parent": "分组框EX4",
+      "events": "窗口程序集_主题包窗口::_按钮EX2_鼠标左键单击",
+      "extensionBytes": 598,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "编辑框EX2",
+      "type": "Lib3.15",
+      "bounds": [
+        130,
+        69,
+        206,
+        26
+      ],
+      "caption": "D:\\",
+      "visible": false,
+      "parent": "分组框EX4",
+      "events": "窗口程序集_主题包窗口::_编辑框EX2_内容被改变",
+      "extensionBytes": 7242,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "标签EX2",
+      "type": "Lib3.5",
+      "bounds": [
+        30,
+        70,
+        99,
+        24
+      ],
+      "caption": "保存位置：",
+      "visible": false,
+      "parent": "分组框EX4",
+      "events": "",
+      "extensionBytes": 178,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "标签EX1",
+      "type": "Lib3.5",
+      "bounds": [
+        29,
+        32,
+        99,
+        24
+      ],
+      "caption": "主题名称：",
+      "visible": false,
+      "parent": "分组框EX4",
+      "events": "",
+      "extensionBytes": 178,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "分组框EX3",
+      "type": "Lib3.2",
+      "bounds": [
+        8,
+        257,
+        416,
+        199
+      ],
+      "caption": "3.主题配置",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "",
+      "extensionBytes": 204,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "组合框EX4",
+      "type": "Lib3.16",
+      "bounds": [
+        133,
+        26,
+        187,
+        32
+      ],
+      "caption": "(竖屏9:16)1080x1920",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 8147,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "标签EX5",
+      "type": "Lib3.5",
+      "bounds": [
+        19,
+        30,
+        133,
+        27
+      ],
+      "caption": "壁纸导出尺寸：",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 182,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "选择框EX3",
+      "type": "Lib3.11",
+      "bounds": [
+        290,
+        107,
+        122,
+        39
+      ],
+      "caption": "深色模式\r\n(Win11/10)",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 2467,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "标签EX4",
+      "type": "Lib3.5",
+      "bounds": [
+        19,
+        157,
+        131,
+        24
+      ],
+      "caption": "默认主题颜色：",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 182,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "组合框EX3",
+      "type": "Lib3.16",
+      "bounds": [
+        133,
+        153,
+        144,
+        32
+      ],
+      "caption": "Win7默认蓝(天空)",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "窗口程序集_主题包窗口::_组合框EX3_内容被改变",
+      "extensionBytes": 10477,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "标签EX3",
+      "type": "Lib3.5",
+      "bounds": [
+        19,
+        113,
+        129,
+        24
+      ],
+      "caption": "壁纸应用方式：",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 182,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "组合框EX2",
+      "type": "Lib3.16",
+      "bounds": [
+        133,
+        110,
+        144,
+        32
+      ],
+      "caption": "平铺",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "窗口程序集_主题包窗口::_组合框EX2_内容被改变",
+      "extensionBytes": 7983,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "选择框EX1",
+      "type": "Lib3.11",
+      "bounds": [
+        290,
+        154,
+        122,
+        31
+      ],
+      "caption": "自动主题色",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "窗口程序集_主题包窗口::_选择框EX1_选中状态改变",
+      "extensionBytes": 2445,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "标签EX6",
+      "type": "Lib3.5",
+      "bounds": [
+        19,
+        71,
+        129,
+        24
+      ],
+      "caption": "壁纸更换频率：",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 182,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "组合框EX1",
+      "type": "Lib3.16",
+      "bounds": [
+        133,
+        68,
+        144,
+        32
+      ],
+      "caption": "30分钟",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 8183,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "选择框EX2",
+      "type": "Lib3.11",
+      "bounds": [
+        290,
+        68,
+        99,
+        33
+      ],
+      "caption": "乱序更换",
+      "visible": false,
+      "parent": "分组框EX3",
+      "events": "",
+      "extensionBytes": 2443,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "分组框EX2",
+      "type": "Lib3.2",
+      "bounds": [
+        8,
+        137,
+        416,
+        112
+      ],
+      "caption": "2.选择操作系统",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "",
+      "extensionBytes": 208,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "单选框EX3",
+      "type": "Lib3.10",
+      "bounds": [
+        30,
+        63,
+        354,
+        32
+      ],
+      "caption": "Windows 7/Vista (*.themepack)",
+      "visible": false,
+      "parent": "分组框EX2",
+      "events": "窗口程序集_主题包窗口::_单选框EX3_选中状态改变",
+      "extensionBytes": 2756,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "单选框EX4",
+      "type": "Lib3.10",
+      "bounds": [
+        30,
+        26,
+        354,
+        32
+      ],
+      "caption": "Windows 11/10/8.1/8 (*.deskthemepack)",
+      "visible": false,
+      "parent": "分组框EX2",
+      "events": "窗口程序集_主题包窗口::_单选框EX4_选中状态改变",
+      "extensionBytes": 2772,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "分组框EX1",
+      "type": "Lib3.2",
+      "bounds": [
+        8,
+        41,
+        416,
+        88
+      ],
+      "caption": "1.选择壁纸范围",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "",
+      "extensionBytes": 208,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "按钮EX3",
+      "type": "Lib3.6",
+      "bounds": [
+        361,
+        37,
+        31,
+        25
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_主题包窗口::_按钮EX3_鼠标左键单击",
+      "extensionBytes": 594,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "单选框EX5",
+      "type": "Lib3.10",
+      "bounds": [
+        266,
+        34,
+        100,
+        32
+      ],
+      "caption": "手动选择",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_主题包窗口::_单选框EX5_选中状态改变",
+      "extensionBytes": 2706,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "单选框EX1",
+      "type": "Lib3.10",
+      "bounds": [
+        162,
+        34,
+        84,
+        32
+      ],
+      "caption": "仅收藏",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_主题包窗口::_单选框EX1_选中状态改变",
+      "extensionBytes": 2704,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "单选框EX2",
+      "type": "Lib3.10",
+      "bounds": [
+        30,
+        34,
+        136,
+        32
+      ],
+      "caption": "整个壁纸库",
+      "visible": false,
+      "parent": "分组框EX1",
+      "events": "窗口程序集_主题包窗口::_单选框EX2_选中状态改变",
+      "extensionBytes": 2708,
+      "page": -1
+    },
+    {
+      "window": "主题包窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "导出为Windows主题包",
+      "visible": false,
+      "parent": "主题包窗口",
+      "events": "",
+      "extensionBytes": 17716,
+      "page": -1
+    },
+    {
+      "window": "壁纸导出主题自选窗口",
+      "name": "图片框EX1",
+      "type": "Lib3.4",
+      "bounds": [
+        128,
+        40,
+        288,
+        216
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "壁纸导出主题自选窗口",
+      "events": "",
+      "extensionBytes": 541,
+      "page": -1
+    },
+    {
+      "window": "壁纸导出主题自选窗口",
+      "name": "列表框Ex",
+      "type": "Lib3.18",
+      "bounds": [
+        8,
+        40,
+        112,
+        296
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "壁纸导出主题自选窗口",
+      "events": "窗口程序集_壁纸导出主题自选窗口::_列表框Ex_项目左键单击",
+      "extensionBytes": 187,
+      "page": -1
+    },
+    {
+      "window": "壁纸导出主题自选窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "手动选择要打包为主题包的壁纸",
+      "visible": false,
+      "parent": "壁纸导出主题自选窗口",
+      "events": "",
+      "extensionBytes": 17718,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "按钮EX1",
+      "type": "Lib3.6",
+      "bounds": [
+        144,
+        213,
+        96,
+        32
+      ],
+      "caption": "检测可用性",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 598,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "按钮EX13",
+      "type": "Lib3.6",
+      "bounds": [
+        254,
+        213,
+        80,
+        32
+      ],
+      "caption": "确定",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "窗口程序集_壁纸来源窗口::_按钮EX13_鼠标左键单击",
+      "extensionBytes": 592,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "标签Ex3",
+      "type": "Lib3.5",
+      "bounds": [
+        46,
+        163,
+        320,
+        37
+      ],
+      "caption": "同步中国区壁纸，自建API访问更稳定，若必应官方\r\n连接失败可切换使用",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 238,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "单选框EX3",
+      "type": "Lib3.10",
+      "bounds": [
+        21,
+        136,
+        271,
+        32
+      ],
+      "caption": "胖哥自建API(bingpics.ybjun.com)",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 2752,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "单选框EX2",
+      "type": "Lib3.10",
+      "bounds": [
+        21,
+        88,
+        240,
+        32
+      ],
+      "caption": "必应中国(cn.bing.com) [默认]",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 2742,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "标签Ex2",
+      "type": "Lib3.5",
+      "bounds": [
+        45,
+        115,
+        320,
+        16
+      ],
+      "caption": "必应中国官网，仅获取中国区壁纸，推荐选择",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 208,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "标签Ex1",
+      "type": "Lib3.5",
+      "bounds": [
+        45,
+        67,
+        320,
+        16
+      ],
+      "caption": "必应国际官网，实际获取的壁纸由所在国家/地区决定",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 216,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "单选框EX1",
+      "type": "Lib3.10",
+      "bounds": [
+        21,
+        40,
+        208,
+        32
+      ],
+      "caption": "必应(www.bing.com)",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 2730,
+      "page": -1
+    },
+    {
+      "window": "壁纸来源窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "选择壁纸获取来源...",
+      "visible": false,
+      "parent": "壁纸来源窗口",
+      "events": "",
+      "extensionBytes": 17373,
+      "page": -1
+    },
+    {
+      "window": "大图窗口",
+      "name": "时钟1",
+      "type": "时钟",
+      "bounds": [
+        128,
+        16,
+        24,
+        40
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "大图窗口",
+      "events": "窗口程序集_大图窗口::_时钟1_周期事件",
+      "extensionBytes": 8,
+      "page": -1
+    },
+    {
+      "window": "大图窗口",
+      "name": "图片框EX1",
+      "type": "Lib3.4",
+      "bounds": [
+        0,
+        0,
+        384,
+        248
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "大图窗口",
+      "events": "窗口程序集_大图窗口::_图片框EX1_鼠标右键单击",
+      "extensionBytes": 517,
+      "page": -1
+    },
+    {
+      "window": "大图窗口",
+      "name": "超级按钮EX1",
+      "type": "Lib3.8",
+      "bounds": [
+        0,
+        0,
+        64,
+        64
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "图片框EX1",
+      "events": "窗口程序集_大图窗口::_超级按钮EX1_鼠标左键单击",
+      "extensionBytes": 4307,
+      "page": -1
+    },
+    {
+      "window": "大图窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "牜暨",
+      "visible": false,
+      "parent": "大图窗口",
+      "events": "",
+      "extensionBytes": 17688,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "多功能按钮EX1",
+      "type": "Lib3.9",
+      "bounds": [
+        24,
+        464,
+        176,
+        40
+      ],
+      "caption": "导出这张壁纸",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_多功能按钮EX1_按钮左键单击",
+      "extensionBytes": 5207,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "按钮EX6",
+      "type": "Lib3.6",
+      "bounds": [
+        117,
+        417,
+        84,
+        40
+      ],
+      "caption": "刷新",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_按钮EX6_鼠标左键单击",
+      "extensionBytes": 592,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "按钮EX1",
+      "type": "Lib3.6",
+      "bounds": [
+        117,
+        371,
+        84,
+        40
+      ],
+      "caption": "收藏",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_按钮EX1_鼠标左键单击",
+      "extensionBytes": 592,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "组合框EX2",
+      "type": "Lib3.16",
+      "bounds": [
+        24,
+        334,
+        176,
+        32
+      ],
+      "caption": "(4K16:9)3840x2160",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_组合框EX2_内容被改变",
+      "extensionBytes": 8141,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "按钮EX3",
+      "type": "Lib3.6",
+      "bounds": [
+        24,
+        417,
+        84,
+        40
+      ],
+      "caption": "删除本图",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_按钮EX3_鼠标左键单击",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "按钮EX2",
+      "type": "Lib3.6",
+      "bounds": [
+        24,
+        371,
+        84,
+        40
+      ],
+      "caption": "设为壁纸",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_按钮EX2_鼠标左键单击",
+      "extensionBytes": 596,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "编辑框EX1",
+      "type": "Lib3.15",
+      "bounds": [
+        216,
+        334,
+        496,
+        170
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "",
+      "extensionBytes": 7310,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "图片框EX1",
+      "type": "Lib3.4",
+      "bounds": [
+        216,
+        48,
+        496,
+        280
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_图片框EX1_鼠标左键单击",
+      "extensionBytes": 541,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "通用对话框1",
+      "type": "通用对话框",
+      "bounds": [
+        288,
+        72,
+        56,
+        48
+      ],
+      "caption": "请选择壁纸导出到的位置",
+      "visible": false,
+      "parent": "图片框EX1",
+      "events": "",
+      "extensionBytes": 140,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "列表框EX1",
+      "type": "Lib3.18",
+      "bounds": [
+        24,
+        48,
+        176,
+        280
+      ],
+      "caption": "列表项目示例",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "窗口程序集_库管理窗口::_列表框EX1_项目左键单击",
+      "extensionBytes": 9697,
+      "page": -1
+    },
+    {
+      "window": "库管理窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "胖哥每日壁纸 - 壁纸库管理（单击图片可全屏欣赏）",
+      "visible": false,
+      "parent": "库管理窗口",
+      "events": "",
+      "extensionBytes": 17740,
+      "page": -1
+    },
+    {
+      "window": "库迁移窗口",
+      "name": "标签EX6",
+      "type": "Lib3.5",
+      "bounds": [
+        16,
+        86,
+        544,
+        18
+      ],
+      "caption": "若新位置为空，则会将现有壁纸库迁移过去，若新位置已有壁纸库，则换用此壁纸库",
+      "visible": false,
+      "parent": "库迁移窗口",
+      "events": "",
+      "extensionBytes": 242,
+      "page": -1
+    },
+    {
+      "window": "库迁移窗口",
+      "name": "进度条EX1",
+      "type": "Lib3.12",
+      "bounds": [
+        16,
+        112,
+        376,
+        32
+      ],
+      "caption": "",
+      "visible": false,
+      "parent": "库迁移窗口",
+      "events": "",
+      "extensionBytes": 1156,
+      "page": -1
+    },
+    {
+      "window": "库迁移窗口",
+      "name": "按钮EX1",
+      "type": "Lib3.6",
+      "bounds": [
+        400,
+        112,
+        160,
+        32
+      ],
+      "caption": "确定修改/迁移",
+      "visible": false,
+      "parent": "库迁移窗口",
+      "events": "窗口程序集_库迁移窗口::_按钮EX1_鼠标左键单击",
+      "extensionBytes": 602,
+      "page": -1
+    },
+    {
+      "window": "库迁移窗口",
+      "name": "按钮EX2",
+      "type": "Lib3.6",
+      "bounds": [
+        464,
+        48,
+        96,
+        32
+      ],
+      "caption": "浏览...",
+      "visible": false,
+      "parent": "库迁移窗口",
+      "events": "窗口程序集_库迁移窗口::_按钮EX2_鼠标左键单击",
+      "extensionBytes": 598,
+      "page": -1
+    },
+    {
+      "window": "库迁移窗口",
+      "name": "编辑框EX2",
+      "type": "Lib3.15",
+      "bounds": [
+        16,
+        48,
+        440,
+        32
+      ],
+      "caption": "D:\\114514",
+      "visible": false,
+      "parent": "库迁移窗口",
+      "events": "窗口程序集_库迁移窗口::_编辑框EX2_内容被改变",
+      "extensionBytes": 7254,
+      "page": -1
+    },
+    {
+      "window": "库迁移窗口",
+      "name": "窗口EX1",
+      "type": "高级表格",
+      "bounds": [
+        8,
+        8,
+        24,
+        24
+      ],
+      "caption": "请指定新的壁纸库位置：",
+      "visible": false,
+      "parent": "库迁移窗口",
+      "events": "",
+      "extensionBytes": 17712,
+      "page": -1
+    }
+  ]
+}

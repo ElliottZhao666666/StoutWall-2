@@ -1,8 +1,12 @@
 # StoutWall ReBuild 2
 
-第二次重制主工程。正式技术栈将在同一标准的 WPF/.NET Framework 4.8 与 C++/Direct2D 原型完成测试后确定；Windows 7 SP1 是主程序最低系统，TLS 1.2 是网络硬要求。原始易语言目录仅作行为参照，图库兼容层沿用现有 x86 gallery.dll 接口。
+这是第二次重制的正式主工程。正式主线采用 **C++17、Win32、Direct2D/DirectWrite**，目标系统为 Windows 7 SP1 x86 及以上，联网必须使用 TLS 1.2。选择依据是已在 Win7 SP1 上运行的候选与较少的运行时部署依赖；目前没有合格的双栈资源采样，故不声称它的内存或 CPU 占用实测优于 WPF。WPF/.NET Framework 4.8 原型保留作界面和行为参考。
 
-本仓库先记录产品边界与重制决策，测试原型和报告位于同级 StoutWall_ReBuild_2_Test。当前禁止实现或启用开机自动启动；旧版启动项污染风险必须由独立的后续设计处理。
+两套原型已在 Win7 SP1 完成首帧显示，并通过同一代理分别完成 Bing 中国源真实入库和独立进程重开。Demo 对照阶段现按“核心链路验证可用”收口；完整界面交互和资源验收尚未完成，也没有性能排名，详见 ../StoutWall_ReBuild_2_Test/reports/2026-11-20-demo-comparison-closeout.md 及 2026-11-20-v6-04b-status.md。
+
+当前 src/ 与 dependencies/gallery.dll 是从通过 Win7 真实网络/重开验证的 C++ v6-04b-03 候选迁入的首个开发基线，来源版本和 DLL 哈希见 DEVELOPMENT_BASELINE.md。这不是最终产品版本；接下来会把原型夹具参数、测试专用输出及临时控制入口从产品启动流程中逐步剥离。
+
+原始易语言目录只作行为参照，图库数据格式通过现有 x86 gallery.dll 兼容。测试原型和完整报告位于同级 StoutWall_ReBuild_2_Test。
 
 ## 已确认边界
 
@@ -14,4 +18,4 @@
 
 ## 当前阶段
 
-技术栈原型对照。见 ../StoutWall_ReBuild_2_Test/TEST_STANDARD.md 和 FEATURE_MATRIX.md。Win7 SP1 必须由真实 Win7 SP1 环境验收；Server 2012 R2 和当前开发机只能提供补充证据。
+正式开发已启动：当前主工程已解除必须有三条 Demo 记录的限制，实时联网模式也不再强制依赖离线 JSON 夹具；离线重放仍须显式提供夹具路径。本机隔离冒烟确认不传离线夹具也能打开、关闭主窗口。下一步整理应用入口和配置/图库路径，再逐功能替换测试候选的临时参数流程。Win7 SP1 的真实验收仍以该系统上的实测为准；Server 2012 R2 和开发机只能作为补充证据。
