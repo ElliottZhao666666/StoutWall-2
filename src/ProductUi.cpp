@@ -771,6 +771,7 @@ struct ProductUi::State {
     }
 
     void ShowTrayMenu() {
+        if (!IsWindowEnabled(ui->MainWindow())) { ui->Show(kMainWindow); return; }
         HMENU menu=CreatePopupMenu();if(!menu)return;
         auto add=[&](UINT id,const wchar_t* title,UINT flags=0){AppendMenuW(menu,MF_STRING|flags,id,title);};
         auto separator=[&](){AppendMenuW(menu,MF_SEPARATOR,0,nullptr);};
@@ -807,7 +808,7 @@ struct ProductUi::State {
     void OpenViewer(const std::vector<unsigned char>& bytes) {
         if(bytes.empty())return;
         if (!ui->WindowHandle(kViewerWindow)) viewerMode = ReplicaUi::ImageMode::Fit;
-        ui->Show(kViewerWindow);
+        ui->Show(kViewerWindow,ui->WindowHandle(kGalleryWindow));
         ui->SetImage(kViewerWindow,L"图片框EX1",bytes);
     }
 
@@ -874,7 +875,7 @@ struct ProductUi::State {
 
     void OpenTheme() {
         const bool fresh=!ui->WindowHandle(kThemeWindow);
-        ui->Show(kThemeWindow);
+        ui->Show(kThemeWindow,ui->MainWindow());
         if(!fresh||!ui->WindowHandle(kThemeWindow))return;
         ui->SetItems(kThemeWindow,L"组合框EX1",{L"1分钟",L"10分钟",L"30分钟",L"1小时",L"6小时",L"1天"});
         ui->SetItems(kThemeWindow,L"组合框EX2",{L"居中",L"拉伸",L"适应",L"填充",L"平铺"});
@@ -908,7 +909,7 @@ struct ProductUi::State {
             if(!selected.empty())ui->SetText(kThemeWindow,L"编辑框EX2",selected);
         } else if(control==L"按钮EX3") {
             const bool fresh=!ui->WindowHandle(kThemeSelectionWindow);
-            ui->Show(kThemeSelectionWindow);
+            ui->Show(kThemeSelectionWindow,owner);
             if(!fresh)return;
             std::vector<std::wstring> dates;
             for(const auto& record:snapshot.records)
@@ -952,7 +953,7 @@ struct ProductUi::State {
             if (closing || !initialized) return;
             const auto* control = name == kSourceWindow ? L"按钮EX13" : (name == kRelocateWindow ? L"按钮EX1" : L"按钮EX6");
             const bool opened = ui->GetText(name, control).empty();
-            ui->Show(name);
+            ui->Show(name,ui->MainWindow());
             if (name == kSourceWindow) {
                 UpdateSourceUi(opened);
             } else if (name == kRelocateWindow) {
@@ -971,7 +972,7 @@ struct ProductUi::State {
             }
             return;
         }
-        ui->Show(name);
+        ui->Show(name,ui->MainWindow());
     }
 
     void HandleEvent(const UiEvent& event) {

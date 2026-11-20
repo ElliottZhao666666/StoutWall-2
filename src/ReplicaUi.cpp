@@ -77,7 +77,7 @@ bool ReplicaUi::RegisterClass() {
     if(RegisterClassExW(&wc)) { ownsClass_=true; return true; }
     return GetLastError()==ERROR_CLASS_ALREADY_EXISTS;
 }
-HWND ReplicaUi::CreateProductWindow(const wchar_t* rawName) {
+HWND ReplicaUi::CreateProductWindow(const wchar_t* rawName, HWND owner) {
     const std::wstring name=rawName; auto found=windows_.find(name);
     if(found!=windows_.end()&&found->second.hwnd&&IsWindow(found->second.hwnd)) return found->second.hwnd;
     if(found!=windows_.end()) {
@@ -87,7 +87,7 @@ HWND ReplicaUi::CreateProductWindow(const wchar_t* rawName) {
     }
     const WindowDef* d=Definition(name);if(!d)return nullptr;
     const bool fullscreen=name==L"大图窗口";
-    const DWORD exStyle=WS_EX_APPWINDOW|(fullscreen?WS_EX_TOPMOST:0);
+    const DWORD exStyle=(owner?0:WS_EX_APPWINDOW)|(fullscreen?WS_EX_TOPMOST:0);
     const DWORD style=WS_CLIPCHILDREN|(fullscreen?WS_POPUP:(WS_CAPTION|WS_SYSMENU|(d->minimize?WS_MINIMIZEBOX:0)));
     RECT r{0,0,MulDiv(d->width,dpi_,96),MulDiv(d->height,dpi_,96)};
     if(fullscreen) {
@@ -100,7 +100,7 @@ HWND ReplicaUi::CreateProductWindow(const wchar_t* rawName) {
     }
     Window state;state.name=name;
     HWND h=CreateWindowExW(exStyle,kClassName,d->title,style,r.left,r.top,
-        r.right-r.left,r.bottom-r.top,nullptr,nullptr,instance_,this);
+        r.right-r.left,r.bottom-r.top,owner,nullptr,instance_,this);
     if(!h)return nullptr;
     if(icon_) {
         SendMessageW(h,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(icon_));
@@ -207,11 +207,30 @@ void ReplicaUi::OnSubclassNcDestroy(HWND target) {
 }
 void ReplicaUi::DestroyWindowState(Window& window) {
     HWND h=window.hwnd;
+    const HWND activeOwner=GetActiveWindow()==h?window.blockedOwner:nullptr;
+    RestoreOwner(window);
     DetachSubclasses(window);
     window.hwnd=nullptr;
     window.children.clear();
     if(h&&IsWindow(h))DestroyWindow(h);
+    if(activeOwner&&IsWindow(activeOwner)&&IsWindowEnabled(activeOwner))SetActiveWindow(activeOwner);
     if(main_==h)main_=nullptr;
+}
+void ReplicaUi::RestoreOwner(Window& window) {
+    const HWND owner=std::exchange(window.blockedOwner,nullptr);
+    if(owner&&IsWindow(owner))EnableWindow(owner,TRUE);
+}
+HWND ReplicaUi::TopModalWindow(HWND window) const {
+    if(!window)return nullptr;
+    for(;;) {
+        HWND next=nullptr;
+        for(const auto& entry:windows_) {
+            const auto& state=entry.second;
+            if(state.hwnd&&state.blockedOwner==window) {next=state.hwnd;break;}
+        }
+        if(!next)return window;
+        window=next;
+    }
 }
 ReplicaUi::Window* ReplicaUi::WindowFor(HWND h) {
     for(auto& entry:windows_)if(entry.second.hwnd==h)return &entry.second;
@@ -225,7 +244,7 @@ ReplicaUi::Child* ReplicaUi::Find(HWND hwnd,const std::wstring& window,const std
 }
 void ReplicaUi::OnCommand(HWND hwnd,UINT id,UINT notification,HWND source) {
     if(hwnd!=main_ && !WindowFor(hwnd)) hwnd=GetAncestor(hwnd,GA_ROOT);
-    Window* w=WindowFor(hwnd);if(!w||!handler_||!source)return;
+    Window* w=WindowFor(hwnd);if(!w||!handler_||!source||!IsWindowEnabled(hwnd))return;
     for(const auto& c:w->children)if(c.id==id&&c.hwnd==source) {
         UiEvent e;e.window=w->name;e.control=c.name;e.notification=notification;
         const int len=GetWindowTextLengthW(source);std::wstring text(static_cast<size_t>(len)+1,L'\0');
@@ -238,6 +257,7 @@ void ReplicaUi::OnCommand(HWND hwnd,UINT id,UINT notification,HWND source) {
     }
 }
 void ReplicaUi::OnClose(HWND h) {
+    if(!IsWindowEnabled(h))return;
     if(h==main_){
         if(handler_) handler_({L"_启动窗口",L"__close__",0,L"",-1,false});
         return;
@@ -249,6 +269,7 @@ void ReplicaUi::OnClose(HWND h) {
 }
 void ReplicaUi::OnNcDestroy(HWND h) {
     for(auto& entry:windows_)if(entry.second.hwnd==h) {
+        RestoreOwner(entry.second);
         DetachSubclasses(entry.second);
         entry.second.hwnd=nullptr;
         entry.second.children.clear();
@@ -354,22 +375,29 @@ void ReplicaUi::OnDrawItem(HWND hwnd,DRAWITEMSTRUCT* draw) {
     }
 }
 bool ReplicaUi::OnContextMenu(HWND hwnd,HWND source,LPARAM) {
-    Window* w=WindowFor(hwnd);if(!w||!handler_||!source)return false;
+    Window* w=WindowFor(hwnd);if(!w||!handler_||!source||!IsWindowEnabled(hwnd))return false;
     for(const auto& c:w->children)if(c.hwnd==source&&c.type==L"Lib3.4") {
         UiEvent e;e.window=w->name;e.control=c.name;e.notification=WM_CONTEXTMENU;
         handler_(e);return true;
     }
     return false;
 }
-void ReplicaUi::Show(const std::wstring& n) {
+void ReplicaUi::Show(const std::wstring& n, HWND owner) {
     auto it=windows_.find(n);
     if(it==windows_.end()||!it->second.hwnd) {
-        HWND h=CreateProductWindow(n.c_str());
+        if(owner&&!IsWindowEnabled(owner))return;
+        HWND h=CreateProductWindow(n.c_str(),owner);
         if(!h)return;
         it=windows_.find(n);
         if(it==windows_.end()||!it->second.hwnd)return;
+        if(owner) {
+            it->second.blockedOwner=owner;
+            EnableWindow(owner,FALSE);
+        }
     }
-    ShowWindow(it->second.hwnd,SW_SHOWNORMAL);SetForegroundWindow(it->second.hwnd);
+    const HWND top=TopModalWindow(it->second.hwnd);
+    ShowWindow(top,SW_SHOWNORMAL);
+    SetForegroundWindow(top);
 }
 void ReplicaUi::Close(const std::wstring& n) {auto it=windows_.find(n);if(it!=windows_.end())DestroyWindowState(it->second);}
 HWND ReplicaUi::WindowHandle(const std::wstring& n) const {

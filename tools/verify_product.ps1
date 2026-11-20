@@ -399,14 +399,18 @@ function Open-Child([string] $Button, [string] $Title = '', [switch] $Gallery) {
     return Wait-For "child window '$Button'" {
         $found = @(Get-TestWindow $Title -Gallery:$Gallery | Where-Object { $_ -ne $main })
         Assert-That ($found.Count -le 1) "Multiple windows for '$Button'."
-        if ($found.Count -eq 1) { $found[0] }
+        if ($found.Count -eq 1) {
+            Assert-That ($session.Owner($found[0]) -eq $main -and !$session.Enabled($main)) "'$Button' did not block its owner."
+            $found[0]
+        }
     }
 }
 
 function Close-Child([IntPtr] $Child, [string] $Name) {
+    $owner = $session.Owner($Child)
     $session.CloseChild($Child, $main)
     $null = Wait-For "closing '$Name'" { !$session.Alive($Child) }
-    Assert-That ($session.Visible($main)) "Main window did not survive closing '$Name'."
+    Assert-That ($owner -and $session.Visible($owner) -and $session.Enabled($owner)) "Owner was not restored after closing '$Name'."
 }
 
 function Test-ChildReopen([string] $Button, [string] $Title, [string] $MarkerClass, [string] $MarkerCaption = '') {
@@ -440,8 +444,9 @@ function Test-GalleryViewer([IntPtr] $Gallery) {
             if ($found.Count -eq 1) { $found[0] }
         }
         $null = Wait-For 'viewer image control' { Find-Control $viewer Static -Visible }
+        Assert-That ($session.Owner($viewer) -eq $Gallery -and !$session.Enabled($Gallery) -and !$session.Enabled($main)) 'Viewer did not preserve the nested modal chain.'
         Close-Child $viewer '查看大图'
-        Assert-That ($session.Visible($Gallery)) 'Gallery did not survive closing the viewer.'
+        Assert-That (!$session.Enabled($main)) 'Main window unlocked while the gallery was still open.'
     }
     Write-Host 'PASS: Gallery preview click opens and reopens the viewer.'
 }
@@ -507,6 +512,7 @@ function Test-CustomThemeWindow([IntPtr] $Theme) {
         if ($found.Count -eq 1) { $found[0] }
     }
     $list = Find-Control $picker ListBox -Visible
+    Assert-That ($session.Owner($picker) -eq $Theme -and !$session.Enabled($Theme) -and !$session.Enabled($main)) 'Theme picker did not preserve the nested modal chain.'
     $rows = Wait-For 'custom theme dates with the first row selected' {
         if ($session.RowCount($list) -eq $pairs.Count -and $session.SelectedRow($list) -eq 0) { Read-Gallery $list }
     }
@@ -514,7 +520,7 @@ function Test-CustomThemeWindow([IntPtr] $Theme) {
         Assert-That ($rows.Contains($pair.Name.Substring(6))) "Fixture date missing from custom selection: $($pair.Name)."
     }
     Close-Child $picker '手动选择'
-    Assert-That ($session.Visible($Theme)) 'Theme window did not survive closing custom selection.'
+    Assert-That (!$session.Enabled($main)) 'Main window unlocked while the theme form was still open.'
     Write-Host 'PASS: Custom theme picker opens and shows the isolated gallery dates.'
 }
 

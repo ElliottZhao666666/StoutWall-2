@@ -35,7 +35,7 @@ public:
     void Quit();
     HWND MainWindow() const noexcept { return main_; }
     HWND WindowHandle(const std::wstring& window) const;
-    void Show(const std::wstring& window);
+    void Show(const std::wstring& window, HWND owner = nullptr);
     void Close(const std::wstring& window);
     void SetText(const std::wstring& window,const std::wstring& control,const std::wstring& value);
     void SetChecked(const std::wstring& window,const std::wstring& control,bool checked);
@@ -61,7 +61,13 @@ private:
         std::vector<unsigned char> image;
         ImageMode imageMode=ImageMode::Stretch;
     };
-    struct Window { std::wstring name; HWND hwnd=nullptr; std::vector<Child> children; std::vector<HWND> subclassed; };
+    struct Window {
+        std::wstring name;
+        HWND hwnd=nullptr;
+        HWND blockedOwner=nullptr;
+        std::vector<Child> children;
+        std::vector<HWND> subclassed;
+    };
     HINSTANCE instance_;
     const v6::AssetModule& assets_;
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
@@ -76,13 +82,15 @@ private:
     HWND main_=nullptr;
     UINT nextId_=100;
     bool RegisterClass();
-    HWND CreateProductWindow(const wchar_t* name);
+    HWND CreateProductWindow(const wchar_t* name, HWND owner = nullptr);
     bool CreateChildren(Window& window);
     void ActivatePage(Window& window, HWND tab, int page);
     void LoadControlImage(Window& window, Child& child);
     bool AttachSubclass(Window& window,HWND target);
     void DetachSubclasses(Window& window);
     void DestroyWindowState(Window& window);
+    void RestoreOwner(Window& window);
+    HWND TopModalWindow(HWND window) const;
     void OnSubclassNcDestroy(HWND);
     void OnCommand(HWND,UINT,UINT,HWND);
     void OnNotify(HWND,NMHDR*);
