@@ -173,6 +173,9 @@ extern "C" DWORD SWP_CALL SWP_ExportTheme(const SWP_ThemeOptions*t,const SWP_Pat
  WritePrivateProfileStringW(nullptr,nullptr,nullptr,ini.c_str());
  for(DWORD i=0;i<count;++i){if(Cancel(o?o->cancelEvent:nullptr))return ERROR_CANCELLED;std::wstring target=(fs::path(desktop)/(L"img"+std::to_wstring(i)+L".jpg")).wstring();DWORD ce=CopyFileChecked(images[i].path,target.c_str(),FALSE,o);if(ce)return ce;}
  std::wstring main=root+L"\\main.theme";if(!MoveFileExW(ini.c_str(),main.c_str(),MOVEFILE_REPLACE_EXISTING))return LastError();
- e=SWP_CreateArchive(SWP_ARCHIVE_CAB,t->cabarcExe,root.c_str(),output.c_str(),o,exitCode);if(e){DeleteFileW(output.c_str());return e;}
+ const std::wstring stagedPackage=(fs::path(cleanup.path)/L"package.cab").wstring();
+ e=SWP_CreateArchive(SWP_ARCHIVE_CAB,t->cabarcExe,root.c_str(),stagedPackage.c_str(),o,exitCode);if(e)return e;
+ if(Cancel(o?o->cancelEvent:nullptr))return ERROR_CANCELLED;
+ if(!MoveFileExW(stagedPackage.c_str(),output.c_str(),MOVEFILE_WRITE_THROUGH))return LastError();
  std::copy(output.begin(),output.end(),out);out[output.size()]=0;return ERROR_SUCCESS;
  }catch(const std::bad_alloc&){return ERROR_NOT_ENOUGH_MEMORY;}catch(...){return ERROR_INVALID_DATA;}}

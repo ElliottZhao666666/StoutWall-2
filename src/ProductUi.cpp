@@ -350,6 +350,7 @@ struct ProductUi::State {
     bool trayInstalled = false;
     HICON trayIcon = nullptr;
     UINT taskbarCreated = 0;
+    ReplicaUi::ImageMode viewerMode = ReplicaUi::ImageMode::Fit;
     v6::AssetModule assets;
 
     State(HINSTANCE h, ProductOptions o) : instance(h), options(std::move(o)) {}
@@ -368,13 +369,13 @@ struct ProductUi::State {
         return result;
     }
 
-    void SubmitAction(ProductRequest request) {
-        if (closing || !initialized) return;
+    bool SubmitAction(ProductRequest request) {
+        if (closing || !initialized) return false;
         const int operation=request.action==ProductAction::ExportTheme?kThemeOperation:
             request.action==ProductAction::StoreLatest?kStoreOperation:kActionOperation;
-        runner.Submit(operation, [this, request, operation]() {
+        return runner.Submit(operation, [this, request, operation]() {
             return Result(operation, backend->Execute(request));
-        });
+        }) != 0;
     }
 
     void UpdateSourceUi(bool selectSavedSource) {
@@ -805,19 +806,26 @@ struct ProductUi::State {
 
     void OpenViewer(const std::vector<unsigned char>& bytes) {
         if(bytes.empty())return;
-        ui->Show(kViewerWindow);ui->SetImage(kViewerWindow,L"图片框EX1",bytes);
+        if (!ui->WindowHandle(kViewerWindow)) viewerMode = ReplicaUi::ImageMode::Fit;
+        ui->Show(kViewerWindow);
+        ui->SetImage(kViewerWindow,L"图片框EX1",bytes);
     }
 
     void HandleViewerEvent(const UiEvent& event) {
         if(event.control==L"超级按钮EX1"&&event.notification==BN_CLICKED) {ui->Close(kViewerWindow);return;}
         if(event.control!=L"图片框EX1"||event.notification!=WM_CONTEXTMENU)return;
         HMENU menu=CreatePopupMenu();if(!menu)return;
-        const wchar_t* names[]={L"适应屏幕",L"居中",L"平铺",L"拉伸",L"关闭大图"};
+        const wchar_t* names[]={L"适应屏幕",L"居中",L"平铺",L"拉伸"};
         for(UINT i=0;i<_countof(names);++i) AppendMenuW(menu,MF_STRING,i+1,names[i]);
-        const UINT command=ChooseMenu(menu,DialogOwner(ui->MainWindow()));
+        CheckMenuRadioItem(menu,1,4,1+static_cast<UINT>(viewerMode),MF_BYCOMMAND);
+        AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(menu,MF_STRING,5,L"点击屏幕中间上方的X关闭大图");
+        const UINT command=ChooseMenu(menu,ui->WindowHandle(kViewerWindow));
         if(command==5)ui->Close(kViewerWindow);
-        else if(command>0&&command<5)ui->SetImageMode(kViewerWindow,L"图片框EX1",
-            static_cast<ReplicaUi::ImageMode>(command-1));
+        else if(command>0&&command<5) {
+            viewerMode=static_cast<ReplicaUi::ImageMode>(command-1);
+            ui->SetImageMode(kViewerWindow,L"图片框EX1",viewerMode);
+        }
     }
 
     void HandleIosEvent(const UiEvent& event) {
@@ -825,7 +833,7 @@ struct ProductUi::State {
         const wchar_t* address=nullptr;
         if(event.control==L"图片框EX1")address=L"https://www.icloud.com/shortcuts/34f07ae9921b4195b855fa4b4e35e814";
         if(event.control==L"图片框EX2")address=L"https://www.icloud.com/shortcuts/fd04e26f4cf246e6868e34cf24d96f2c";
-        HWND owner=DialogOwner(ui->MainWindow());
+        HWND owner=ui->WindowHandle(event.window);
         if(address&&CopyText(owner,address))MessageBoxW(owner,L"快捷指令链接已经复制到剪贴板，快去分享给苹果设备吧！",
             L"快捷指令链接已复制",MB_OK|MB_ICONINFORMATION);
         if(event.control==L"按钮EX4")OpenPage(owner,L"https://mp.weixin.qq.com/s?__biz=Mzg4NDYyOTA2NA==&mid=2247486223&idx=1&sn=1c0267ff6f47274d8e67272cd2cba775");
@@ -833,19 +841,41 @@ struct ProductUi::State {
 
     bool themeBusy = false;
 
+    fs::path ThemeDirectory() {
+        const auto value=ui->GetText(kThemeWindow,L"编辑框EX2");
+        if(value.empty())return {};
+        return options.testMode?IsolatedDestination(options.dataRoot,value):fs::path(value);
+    }
+
+    void UpdateThemeForm() {
+        if(!ui->WindowHandle(kThemeWindow))return;
+        for(const auto* group:{L"分组框EX1",L"分组框EX2",L"分组框EX3",L"分组框EX4"})
+            ui->SetEnabled(kThemeWindow,group,!themeBusy);
+        const bool modern=ui->Selection(kThemeWindow,L"单选框EX4")==BST_CHECKED;
+        const bool custom=ui->Selection(kThemeWindow,L"单选框EX5")==BST_CHECKED;
+        ui->SetEnabled(kThemeWindow,L"单选框EX1",!themeBusy&&snapshot.favorites>0);
+        ui->SetEnabled(kThemeWindow,L"选择框EX3",!themeBusy&&modern);
+        ui->SetVisible(kThemeWindow,L"按钮EX3",custom);
+        ui->SetEnabled(kThemeWindow,L"按钮EX3",!themeBusy&&custom);
+        std::error_code ec;
+        const auto directory=ThemeDirectory();
+        ui->SetEnabled(kThemeWindow,L"按钮EX1",!themeBusy&&!directory.empty()&&fs::is_directory(directory,ec));
+    }
+
     void SetThemeKind(bool modern) {
         ui->SetChecked(kThemeWindow,L"单选框EX4",modern);
         ui->SetChecked(kThemeWindow,L"单选框EX3",!modern);
         ui->SetChecked(kThemeWindow,L"选择框EX1",true);
-        ui->SetEnabled(kThemeWindow,L"选择框EX3",modern);
+        ui->SetVisible(kThemeWindow,L"选择框EX3",modern);
+        ui->SetText(kThemeWindow,L"选择框EX3",L"深色模式 (Win11/10)");
         ui->SetText(kThemeWindow,L"标签EX4",modern?L"默认主题颜色：":L"指定主题颜色：");
         ui->SetText(kThemeWindow,L"选择框EX1",modern?L"自动主题色":L"透明效果");
     }
 
     void OpenTheme() {
-        const bool fresh=ui->GetText(kThemeWindow,L"按钮EX1").empty();
+        const bool fresh=!ui->WindowHandle(kThemeWindow);
         ui->Show(kThemeWindow);
-        if(!fresh)return;
+        if(!fresh||!ui->WindowHandle(kThemeWindow))return;
         ui->SetItems(kThemeWindow,L"组合框EX1",{L"1分钟",L"10分钟",L"30分钟",L"1小时",L"6小时",L"1天"});
         ui->SetItems(kThemeWindow,L"组合框EX2",{L"居中",L"拉伸",L"适应",L"填充",L"平铺"});
         ui->SetItems(kThemeWindow,L"组合框EX3",{L"Win11默认蓝",L"Win10默认蓝",L"Win7默认蓝(天空)",L"深蓝色(黄昏)",L"青绿色(大海)",L"绿色(叶)",L"浅绿色",L"黄色(太阳)",L"橙色(南瓜色)",L"深红色",L"紫红色",L"淡红色",L"紫罗兰色",L"淡紫色",L"灰褐色",L"巧克力色",L"暗灰色",L"白色(白霜)"});
@@ -855,28 +885,36 @@ struct ProductUi::State {
         ui->SetSelection(kThemeWindow,L"组合框EX3",0);
         ui->SetSelection(kThemeWindow,L"组合框EX4",static_cast<int>(snapshot.config.currentWall.size));
         ui->SetChecked(kThemeWindow,L"单选框EX2",true);
-        ui->SetEnabled(kThemeWindow,L"单选框EX1",snapshot.favorites>0);
-        ui->SetEnabled(kThemeWindow,L"按钮EX3",false);
         ui->SetText(kThemeWindow,L"按钮EX3",L"…");
-        ui->SetText(kThemeWindow,L"编辑框EX2",options.testMode?options.dataRoot:L"");
+        if(options.testMode)ui->SetText(kThemeWindow,L"编辑框EX2",options.dataRoot);
         SetThemeKind(true);
+        UpdateThemeForm();
     }
 
     void HandleThemeEvent(const UiEvent& event) {
-        if(themeBusy||event.notification!=BN_CLICKED)return;
+        if(themeBusy)return;
         const auto& control=event.control;
+        if(control==L"编辑框EX2"&&event.notification==EN_CHANGE){UpdateThemeForm();return;}
+        if(event.notification!=BN_CLICKED)return;
         if(control==L"单选框EX3"||control==L"单选框EX4")SetThemeKind(control==L"单选框EX4");
-        if(control==L"单选框EX1"||control==L"单选框EX2"||control==L"单选框EX5")
-            ui->SetEnabled(kThemeWindow,L"按钮EX3",control==L"单选框EX5");
-        HWND owner=DialogOwner(ui->MainWindow());
+        if(control==L"单选框EX1"||control==L"单选框EX2"||control==L"单选框EX5") {
+            for(const auto* radio:{L"单选框EX1",L"单选框EX2",L"单选框EX5"})
+                ui->SetChecked(kThemeWindow,radio,control==radio);
+        }
+        UpdateThemeForm();
+        HWND owner=ui->WindowHandle(kThemeWindow);
         if(control==L"按钮EX2") {
             const auto selected=PickPath(owner,L"请选择主题包的导出位置",ui->GetText(kThemeWindow,L"编辑框EX2"));
             if(!selected.empty())ui->SetText(kThemeWindow,L"编辑框EX2",selected);
         } else if(control==L"按钮EX3") {
+            const bool fresh=!ui->WindowHandle(kThemeSelectionWindow);
             ui->Show(kThemeSelectionWindow);
+            if(!fresh)return;
             std::vector<std::wstring> dates;
-            for(const auto& record:snapshot.records)dates.emplace_back(record.date);
+            for(const auto& record:snapshot.records)
+                dates.push_back(RecordDate(record)+(record.favorite?L"[收藏]":L""));
             ui->SetItems(kThemeSelectionWindow,L"列表框Ex",dates);
+            if(!dates.empty())ui->SetSelection(kThemeSelectionWindow,L"列表框Ex",0);
         } else if(control==L"按钮EX1"&&initialized&&!closing) {
             auto checked=[&](const wchar_t* name){return ui->Selection(kThemeWindow,name)==BST_CHECKED;};
             if(checked(L"单选框EX5")) {
@@ -895,15 +933,17 @@ struct ProductUi::State {
             theme.transparency=theme.kind==SWP_THEME_WIN7&&checked(L"选择框EX1");
             theme.autoColor=theme.kind==SWP_THEME_MODERN&&checked(L"选择框EX1");
             const auto name=ui->GetText(kThemeWindow,L"编辑框EX1");
-            const auto rawDirectory=ui->GetText(kThemeWindow,L"编辑框EX2");
-            const auto directory=options.testMode?IsolatedDestination(options.dataRoot,rawDirectory).wstring():rawDirectory;
+            const auto directory=ThemeDirectory().wstring();
             if(name.empty()||directory.empty()||name.size()>=_countof(theme.name)||directory.size()>=_countof(theme.outputDir)||
                 (options.testMode&&!IsWithin(options.dataRoot,directory))) {
                 MessageBoxW(owner,L"请检查主题名称和保存位置。",L"导出主题包",MB_OK|MB_ICONWARNING);return;
             }
             wcscpy_s(theme.name,name.c_str());wcscpy_s(theme.outputDir,directory.c_str());
-            themeBusy=true;ui->SetEnabled(kThemeWindow,L"按钮EX1",false);ui->SetText(kThemeWindow,L"按钮EX1",L"正在导出…");
-            SubmitAction(std::move(request));
+            if(!SubmitAction(std::move(request)))return;
+            themeBusy=true;
+            ui->SetText(kThemeWindow,L"按钮EX1",L"正在导出…");
+            ui->SetProgress(kThemeWindow,L"进度条EX1",0,true);
+            UpdateThemeForm();
         }
     }
 
@@ -966,7 +1006,6 @@ struct ProductUi::State {
             else if (event.control == L"按钮EX8") OpenTheme();
             else if (event.control == L"按钮EX12") ShowAuxiliary(L"壁纸来源窗口");
             else if (event.control == L"按钮EX4") ShowAuxiliary(L"iOS窗口");
-            else if (event.control == L"图片框EX1") OpenViewer(snapshot.image.empty()?noPicture:snapshot.image);
             else if (event.control == L"按钮EX11") MessageBoxW(ui->MainWindow(),
                 L"联系我(作者)的三种方式：\r\n1.扫描左下方二维码，在B站私信发送问题或建议。\r\n2.扫描旁边的二维码或微信搜一搜‘月半菌’。\r\n3.给我发邮件：crh380bl@outlook.com。",L"软件遇到问题或想提点建议？",MB_OK|MB_ICONINFORMATION);
             else if (event.control == L"按钮EX10"&&MessageBoxW(ui->MainWindow(),
@@ -1101,10 +1140,15 @@ struct ProductUi::State {
         if (result->operation == kThemeOperation) {
             themeBusy=false;
             ui->SetText(kThemeWindow,L"按钮EX1",L"开始导出");
-            ui->SetEnabled(kThemeWindow,L"按钮EX1",true);
+            ui->SetProgress(kThemeWindow,L"进度条EX1",result->code==0?100:0,false);
+            UpdateThemeForm();
+            const HWND owner=ui->WindowHandle(kThemeWindow);
             if(!closing&&result->payload) {
                 const auto value=std::static_pointer_cast<ProductSnapshot>(result->payload);
-                MessageBoxW(DialogOwner(ui->MainWindow()),value->status.c_str(),L"导出主题包",MB_OK|MB_ICONINFORMATION);
+                MessageBoxW(owner,value->status.c_str(),L"导出主题包",MB_OK|MB_ICONINFORMATION);
+            } else if(!closing&&result->code!=0) {
+                MessageBoxW(owner,result->message.c_str(),L"导出主题包",MB_OK|MB_ICONERROR);
+                return true;
             }
         }
         if(result->operation==kStoreOperation&&!closing&&result->payload) {
@@ -1147,6 +1191,12 @@ struct ProductUi::State {
         ui = std::make_unique<ReplicaUi>(instance, [this](const UiEvent& event) { HandleEvent(event); }, originalIcon, assets);
         if (!ui->CreateMain()) { CoUninitialize(); throw std::runtime_error("ReplicaUi::CreateMain failed"); }
         ui->SetMessageHandler([this](UINT m, WPARAM w, LPARAM l) { return HandleMessage(m, w, l); });
+        ui->SetCloseGuard([this](const std::wstring& name) {
+            if(name!=kThemeWindow)return true;
+            if(themeBusy)return false;
+            ui->Close(kThemeSelectionWindow);
+            return true;
+        });
         trayIcon=originalIcon;taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");AddTray();
         ui->SetItems(kMainWindow,L"组合框EX1",{L"5分钟",L"10分钟",L"20分钟",L"30分钟",L"45分钟",L"1小时",L"2小时",L"3小时",L"5小时",L"8小时"});
         ui->SetItems(kMainWindow,L"组合框EX2",kSizes);

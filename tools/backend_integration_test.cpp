@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,147 @@ void CheckFiveSizes(const fs::path& directory, const std::wstring& date) {
         const fs::path file = directory / (date + L"_" + name + L".jpg");
         Require(fs::is_regular_file(file) && IsJpeg(file), "invalid exported size: " + file.string());
     }
+}
+
+void CheckCurrent(const stoutwall::ProductSnapshot& snapshot, const fs::path& root,
+                  const std::wstring& expected) {
+    Require(snapshot.hasCurrent && Date(snapshot.current) == expected &&
+                snapshot.config.currentWall.enddate == expected && snapshot.config.galleryCurrent == expected &&
+                snapshot.current.favorite == static_cast<int32_t>(snapshot.config.currentWall.favorite),
+            "current wallpaper metadata does not match the applied record");
+    Require(snapshot.image == Read(root / L"Current_Wall.jpg"),
+            "current wallpaper cache differs from the snapshot image");
+}
+
+void CheckNoRotation(const stoutwall::ProductSnapshot& before, const stoutwall::ProductSnapshot& after) {
+    Require(after.intervalMs == 0 && after.hasCurrent == before.hasCurrent &&
+                Date(after.current) == Date(before.current) && after.image == before.image &&
+                after.config.renderPoint == before.config.renderPoint,
+            "disabled rotation changed the wallpaper or cursor");
+}
+
+void CheckTick(const fs::path& runtime, const fs::path& fixture, const fs::path& root) {
+    using stoutwall::ProductAction;
+    CopyFixture(fixture, root / L"Gallery");
+    stoutwall::ProductBackend backend;
+    const fs::path config = root / L"StoutWall.cfg";
+    auto snapshot = backend.Initialize(runtime.wstring(), root.wstring(), config.wstring(), true, nullptr, L"");
+    Require(snapshot.records.size() >= 3, "rotation fixture needs at least three records");
+    const auto first = Date(snapshot.records[0]);
+    const auto second = Date(snapshot.records[1]);
+    const auto third = Date(snapshot.records[2]);
+    Run(backend, ProductAction::AutoSave, 1);
+    snapshot = Run(backend, ProductAction::Tick);
+    Require(!snapshot.hasCurrent && !fs::exists(root / L"Current_Wall.jpg"),
+            "isolated daily tick unexpectedly downloaded an image");
+
+    Run(backend, ProductAction::BrowseSelect, 0, first);
+    snapshot = Run(backend, ProductAction::BrowseApply);
+    CheckCurrent(snapshot, root, first);
+    Require(snapshot.config.mode == SWP_GALLERY && snapshot.config.renderPoint == 1 && snapshot.intervalMs > 0,
+            "browse apply did not align the gallery cursor with the selected image");
+    snapshot = Run(backend, ProductAction::Tick);
+    CheckCurrent(snapshot, root, second);
+    Require(snapshot.config.autoSave == 1 && snapshot.config.renderPoint == 2,
+            "gallery tick with AutoSave enabled did not advance exactly one record");
+    const auto paused = Run(backend, ProductAction::Pause, 1);
+    CheckNoRotation(paused, Run(backend, ProductAction::Tick));
+    Run(backend, ProductAction::Pause, 0);
+
+    // Force the atomic cache replacement to fail while the previous image stays readable.
+    const HANDLE held = CreateFileW((root / L"Current_Wall.jpg").c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(held != INVALID_HANDLE_VALUE, "unable to lock the isolated current image");
+    bool stepFailed = false, resizeFailed = false;
+    try { Run(backend, ProductAction::Tick); }
+    catch (const std::runtime_error&) { stepFailed = true; }
+    try { Run(backend, ProductAction::ChangeSize, 1); }
+    catch (const std::runtime_error&) { resizeFailed = true; }
+    CloseHandle(held);
+    Require(stepFailed && resizeFailed, "cache write failures were not reported");
+    snapshot = Run(backend, ProductAction::AutoSave, 1);
+    CheckCurrent(snapshot, root, second);
+    Require(snapshot.config.renderPoint == 2 && snapshot.config.currentWall.size == 0,
+            "failed wallpaper apply changed the cursor or configured size");
+    snapshot = Run(backend, ProductAction::Tick);
+    CheckCurrent(snapshot, root, third);
+
+    Run(backend, ProductAction::ClearFavorites);
+    Run(backend, ProductAction::BrowseSelect, 0, first);
+    Run(backend, ProductAction::BrowseFavorite);
+    snapshot = Run(backend, ProductAction::ChangeMode, SWP_FAVORITES);
+    CheckCurrent(snapshot, root, first);
+    Require(snapshot.config.mode == SWP_FAVORITES && snapshot.favorites == 1,
+            "one favorite cannot be displayed in favorites mode");
+    CheckNoRotation(snapshot, Run(backend, ProductAction::Tick));
+    CheckNoRotation(snapshot, Run(backend, ProductAction::Next));
+    Run(backend, ProductAction::BrowseSelect, 0, third);
+    snapshot = Run(backend, ProductAction::BrowseFavorite);
+    Require(snapshot.intervalMs > 0, "adding a second favorite did not enable rotation");
+    snapshot = Run(backend, ProductAction::Tick);
+    CheckCurrent(snapshot, root, third);
+    Require(snapshot.config.autoSave == 1 && snapshot.current.favorite == 1,
+            "favorites tick with AutoSave did not stay in the favorites sequence");
+    snapshot = Run(backend, ProductAction::Tick);
+    CheckCurrent(snapshot, root, first);
+
+    snapshot = Run(backend, ProductAction::ClearFavorites);
+    Require(snapshot.config.mode == SWP_GALLERY && snapshot.favorites == 0 && !snapshot.current.favorite,
+            "clearing favorites did not return to gallery mode with updated metadata");
+    snapshot = Run(backend, ProductAction::ChangeMode, SWP_FAVORITES);
+    Require(snapshot.config.mode == SWP_GALLERY, "empty favorites mode replaced the current mode");
+    snapshot = Run(backend, ProductAction::Tick);
+    CheckCurrent(snapshot, root, second);
+    SWP_Config disk{};
+    disk.cbSize = sizeof(disk);
+    Require(SWP_LoadConfig(config.c_str(), &disk) == ERROR_SUCCESS && disk.mode == SWP_GALLERY &&
+                disk.currentWall.enddate == second && disk.renderPoint == 2,
+            "successful rotation did not persist the applied wallpaper and cursor together");
+    std::wcout << L"PASS: isolated gallery/favorites ticks, pause, sparse favorites, and failed apply state.\n";
+}
+
+void CheckSparseGallery(const fs::path& runtime, const fs::path& fixture, const fs::path& root) {
+    using stoutwall::ProductAction;
+    const fs::path gallery = root / L"Gallery";
+    const fs::path config = root / L"StoutWall.cfg";
+    CopyFixture(fixture, gallery);
+    // Trim the copy using the library API, bypassing the product's two-record deletion guard.
+    auto trim = [&](int count) {
+        Require(Library_OpenW(runtime.c_str(), gallery.c_str(), 0) == 0, "could not open sparse gallery fixture");
+        bool ok = true;
+        for (int remaining = Library_Count(0); remaining > count; --remaining) {
+            SWL_Record record{};
+            if (Library_GetRecord(remaining, 0, &record) < 0 || Library_Delete(record.date) < 0) {
+                ok = false;
+                break;
+            }
+        }
+        const int actual = Library_Count(0);
+        Require(Library_Close() == 0 && ok && actual == count, "could not trim isolated gallery fixture");
+    };
+    trim(1);
+    {
+        stoutwall::ProductBackend backend;
+        backend.Initialize(runtime.wstring(), root.wstring(), config.wstring(), true, nullptr, L"");
+        const auto single = Run(backend, ProductAction::ChangeMode, SWP_GALLERY);
+        Require(single.total == 1 && single.config.mode == SWP_GALLERY, "single-image gallery mode was not entered");
+        CheckCurrent(single, root, Date(single.records.front()));
+        CheckNoRotation(single, Run(backend, ProductAction::Tick));
+        CheckNoRotation(single, Run(backend, ProductAction::Previous));
+    }
+    trim(0);
+    fs::remove(root / L"Current_Wall.jpg");
+    stoutwall::ProductBackend backend;
+    const auto empty = backend.Initialize(runtime.wstring(), root.wstring(), config.wstring(), true, nullptr, L"");
+    Require(empty.total == 0 && !empty.hasCurrent && !empty.hasSelected && empty.config.mode == SWP_GALLERY,
+            "persisted gallery mode could not safely open an empty gallery");
+    CheckNoRotation(empty, Run(backend, ProductAction::Tick));
+    CheckNoRotation(empty, Run(backend, ProductAction::Next));
+    Run(backend, ProductAction::ChangeMode, SWP_DAILY);
+    const auto rejected = Run(backend, ProductAction::ChangeMode, SWP_GALLERY);
+    Require(rejected.config.mode == SWP_DAILY && !rejected.hasCurrent,
+            "switch to an empty gallery changed the active mode or current wallpaper");
+    std::wcout << L"PASS: zero- and one-image galleries and rejected empty mode change.\n";
 }
 
 } // namespace
@@ -239,19 +381,23 @@ int wmain(int argc, wchar_t** argv) {
             snapshot = Run(backend, stoutwall::ProductAction::ClearFavorites);
             Require(snapshot.favorites == 0, "clear favorites left a favorite record");
             snapshot = Run(backend, stoutwall::ProductAction::ChangeMode, SWP_FAVORITES);
-            Require(snapshot.config.mode == SWP_FAVORITES && snapshot.intervalMs == 0,
-                    "empty favorites mode did not stop rotation");
+            Require(snapshot.config.mode == SWP_GALLERY,
+                    "empty favorites mode replaced the current gallery mode");
             snapshot = Run(backend, stoutwall::ProductAction::ChangeMode, SWP_GALLERY);
             Require(snapshot.config.mode == SWP_GALLERY, "could not return to gallery mode");
 
             std::wcout << L"PASS: backend core actions, exports, migration, deletion, favorites, and themes.\n";
         }
 
-        stoutwall::ProductBackend reopened;
-        snapshot = reopened.Initialize(runtime.wstring(), root.wstring(), config.wstring(), true, nullptr, L"");
-        Require(snapshot.total >= 2 && snapshot.favorites == 0 && snapshot.config.mode == SWP_GALLERY,
-                "reopened state does not match the completed isolated round");
+        {
+            stoutwall::ProductBackend reopened;
+            snapshot = reopened.Initialize(runtime.wstring(), root.wstring(), config.wstring(), true, nullptr, L"");
+            Require(snapshot.total >= 2 && snapshot.favorites == 0 && snapshot.config.mode == SWP_GALLERY,
+                    "reopened state does not match the completed isolated round");
+        }
         std::wcout << L"PASS: isolated configuration and gallery reopen after backend shutdown.\n";
+        CheckTick(runtime, fixture, root / L"tick");
+        CheckSparseGallery(runtime, fixture, root / L"sparse");
         std::wcout << L"Retained test root: " << root.wstring() << L"\n";
         return 0;
     } catch (const std::exception& error) {

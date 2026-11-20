@@ -11,11 +11,15 @@ Use -TempParent if the Windows temp path is not ASCII. Each run leaves its fresh
 data root for inspection. Exit code 0 means all automated checks passed; 1 means
 failure, including missing prerequisites. A running legacy instance is left alone.
 
+The script checks child windows on reopen, disabled seven-day entries, gallery preview
+click notifications, both theme package formats and same-name refusal. Use a
+fixture with at least two dated pairs for theme export. Packages stay in the
+test data root and are never installed. The source, relocation and iOS checks
+only open and close their windows.
+
 Manual follow-up with disposable data and --test-mode: check main X hides to
-tray, restore that instance, then exit from Settings. Check rendering and the
-full-screen viewer, source save/refresh, gallery relocation, and theme options
-separately. The automated check only opens/closes the source, relocation, theme
-and iOS windows. Do not operate startup controls or apply a desktop wallpaper.
+tray, restore that instance, then exit from Settings. Check large-image rendering
+and sizing separately. Do not operate startup controls or apply a desktop wallpaper.
 #>
 [CmdletBinding()]
 param(
@@ -93,6 +97,7 @@ namespace StoutWallVerification {
         [DllImport("user32.dll", ExactSpelling=true, SetLastError=true)] static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
         [DllImport("user32.dll", ExactSpelling=true, SetLastError=true)] static extern IntPtr SendMessageTimeoutW(IntPtr h, uint m, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
         [DllImport("user32.dll", EntryPoint="SendMessageTimeoutW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] static extern IntPtr SendText(IntPtr h, uint m, IntPtr w, StringBuilder l, uint flags, uint timeout, out IntPtr result);
+        [DllImport("user32.dll", ExactSpelling=true)] static extern int GetWindowLongW(IntPtr h, int index);
         [DllImport("user32.dll", ExactSpelling=true)] static extern IntPtr GetParent(IntPtr h);
 
         static Exception Failed(string step) { return new Win32Exception(Marshal.GetLastWin32Error(), step); }
@@ -104,7 +109,8 @@ namespace StoutWallVerification {
             try {
                 JobLimits limits = new JobLimits();
                 limits.Basic.Flags = 0x2008; // KILL_ON_JOB_CLOSE | ACTIVE_PROCESS
-                limits.Basic.ActiveProcesses = 1;
+                // Theme export runs 7za and cabarc in sequence, inside this job.
+                limits.Basic.ActiveProcesses = 2;
                 if (!SetInformationJobObject(job, 9, ref limits, Marshal.SizeOf(limits))) throw Failed("SetInformationJobObject");
                 StartupInfo startup = new StartupInfo();
                 startup.Size = Marshal.SizeOf(startup);
@@ -163,6 +169,7 @@ namespace StoutWallVerification {
         }
         public bool Visible(IntPtr h) { return Owns(h) && IsWindowVisible(h); }
         public bool Enabled(IntPtr h) { return Owns(h) && IsWindowEnabled(h); }
+        public bool Alive(IntPtr h) { return Owns(h); }
         public int ControlId(IntPtr h) { Check(h); return GetDlgCtrlID(h); }
         public IntPtr Owner(IntPtr h) { Check(h); return GetWindow(h, 4); } // GW_OWNER
         public string Class(IntPtr h) {
@@ -193,6 +200,40 @@ namespace StoutWallVerification {
             return text.ToString();
         }
         public string Text(IntPtr h) { return TextMessage(h, 0x000D, 4096); }
+        public int CheckedState(IntPtr button) { return (int)Send(button, 0x00F0, 0, IntPtr.Zero); } // BM_GETCHECK
+        public bool IsImageControl(IntPtr h) {
+            return Class(h).Equals("Static", StringComparison.OrdinalIgnoreCase) &&
+                (GetWindowLongW(h, -16) & 0x11F) == 0x10D; // SS_OWNERDRAW | SS_NOTIFY
+        }
+        public void ClickPreview(IntPtr preview) {
+            if (!Visible(preview) || !Enabled(preview) || !IsImageControl(preview))
+                throw new InvalidOperationException("Expected visible preview control");
+            // Deliver the same STN_CLICKED notification as the Static control.
+            Post(GetParent(preview), 0x0111, ControlId(preview), preview); // STN_CLICKED = 0
+        }
+        public void SetEdit(IntPtr edit, string value) {
+            if (!Visible(edit) || !Enabled(edit) || !Class(edit).Equals("Edit", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Expected visible edit control");
+            IntPtr result;
+            if (SendText(edit, 0x000C, IntPtr.Zero, new StringBuilder(value), 0x23, 2000, out result) == IntPtr.Zero)
+                throw Failed("WM_SETTEXT");
+            if (result == IntPtr.Zero || Text(edit) != value) throw new InvalidOperationException("Theme edit did not take effect");
+        }
+        public int ComboItemIndex(IntPtr combo, string label) {
+            if (!Class(combo).Equals("ComboBox", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Expected combo box");
+            IntPtr result;
+            if (SendText(combo, 0x0158, new IntPtr(-1), new StringBuilder(label), 0x23, 2000, out result) == IntPtr.Zero)
+                throw Failed("CB_FINDSTRINGEXACT");
+            return unchecked((int)result.ToInt64());
+        }
+        public void SelectComboItem(IntPtr combo, string label) {
+            if (!Visible(combo) || !Enabled(combo)) throw new InvalidOperationException("Combo box is not available");
+            int index = ComboItemIndex(combo, label);
+            if (index < 0 || Send(combo, 0x014E, index, IntPtr.Zero) != index)
+                throw new InvalidOperationException("Theme option unavailable: " + label);
+            Send(GetParent(combo), 0x0111, (1 << 16) | ControlId(combo), combo); // CBN_SELCHANGE
+        }
         public int RowCount(IntPtr list) { return (int)Send(list, 0x018B, 0, IntPtr.Zero); }
         public int SelectedRow(IntPtr list) { return (int)Send(list, 0x0188, 0, IntPtr.Zero); }
         public string RowText(IntPtr list, int row) {
@@ -214,6 +255,11 @@ namespace StoutWallVerification {
             if (Class(dialog) != "#32770" || !Visible(button) || !Enabled(button) || ControlId(button) != 6)
                 throw new InvalidOperationException("Exit dialog Yes button not available");
             Post(dialog, 0x0111, 6, button); // WM_COMMAND, IDYES, BN_CLICKED
+        }
+        public void CloseThemeResult(IntPtr dialog, IntPtr theme, string title) {
+            if (Class(dialog) != "#32770" || Owner(dialog) != theme || Title(dialog) != title || !Visible(dialog))
+                throw new InvalidOperationException("Expected the theme export result");
+            Post(dialog, 0x0010, 0, IntPtr.Zero); // WM_CLOSE
         }
         public void CloseChild(IntPtr child, IntPtr main) {
             if (child == main || Class(child) != "StoutWallOriginalWindow") throw new InvalidOperationException("Not a product child window");
@@ -293,7 +339,7 @@ function Get-TestWindow([string] $Title, [string] $Class = 'StoutWallOriginalWin
     foreach ($window in $session.Windows([IntPtr]::Zero)) {
         if (!$session.Visible($window) -or $session.Class($window) -ne $Class) { continue }
         if ($Gallery) {
-            if (Find-Control $window ListBox -Visible) { $window }
+            if ((Find-Control $window ListBox -Visible) -and (Find-Control $window Button '刷新' -Visible)) { $window }
         } elseif ($session.Title($window) -ceq $Title) {
             $window
         }
@@ -311,7 +357,9 @@ function Find-Control([IntPtr] $Parent, [string] $Class, [string] $Caption = '',
 
 function Click-Allowed([IntPtr] $Parent, [string] $Caption) {
     $allowed = @('选择壁纸源...', '壁纸库位置...', '查看/管理壁纸库', '导出为Windows 主题包',
-        '获取 iOS 版', '退出软件', '收藏', '取消收藏')
+        '获取 iOS 版', '退出软件', '收藏', '取消收藏', '手动选择', '…', '整个壁纸库', '开始导出',
+        'Windows 7/Vista (*.themepack)', 'Windows 11/10/8.1/8 (*.deskthemepack)',
+        '透明效果', '自动主题色', '深色模式 (Win11/10)', '乱序更换')
     Assert-That ($Caption -cin $allowed) "Button outside the acceptance allowlist: $Caption"
     $button = Wait-For "enabled button '$Caption'" {
         $found = Find-Control $Parent Button $Caption -Visible
@@ -345,6 +393,8 @@ function Select-Page([int] $Page) {
 }
 
 function Open-Child([string] $Button, [string] $Title = '', [switch] $Gallery) {
+    $existing = @(Get-TestWindow $Title -Gallery:$Gallery | Where-Object { $_ -ne $main })
+    Assert-That ($existing.Count -eq 0) "Child window for '$Button' was already open."
     Click-Allowed $main $Button
     return Wait-For "child window '$Button'" {
         $found = @(Get-TestWindow $Title -Gallery:$Gallery | Where-Object { $_ -ne $main })
@@ -355,8 +405,45 @@ function Open-Child([string] $Button, [string] $Title = '', [switch] $Gallery) {
 
 function Close-Child([IntPtr] $Child, [string] $Name) {
     $session.CloseChild($Child, $main)
-    $null = Wait-For "closing '$Name'" { !$session.Visible($Child) }
+    $null = Wait-For "closing '$Name'" { !$session.Alive($Child) }
     Assert-That ($session.Visible($main)) "Main window did not survive closing '$Name'."
+}
+
+function Test-ChildReopen([string] $Button, [string] $Title, [string] $MarkerClass, [string] $MarkerCaption = '') {
+    for ($opening = 1; $opening -le 2; $opening++) {
+        $child = Open-Child $Button $Title
+        $null = Wait-For "'$Title' control on opening $opening" { Find-Control $child $MarkerClass $MarkerCaption -Visible }
+        Close-Child $child $Title
+    }
+    Write-Host "PASS: '$Title' closes and reopens."
+}
+
+function Test-SevenDayUnavailable {
+    Select-Page 0
+    $button = Find-Control $main Button '七日壁纸'
+    Assert-That ($button -and (!$session.Visible($button) -or !$session.Enabled($button))) 'Seven-day view entry became available.'
+    Select-Page 1
+    $radio = Find-Control $main Button '7日壁纸模式' -Visible
+    Assert-That ($radio -and !$session.Enabled($radio) -and $session.CheckedState($radio) -eq 0) 'Seven-day mode must be disabled and unchecked.'
+    Write-Host 'PASS: Disabled seven-day mode and unavailable seven-day view entry.'
+}
+
+function Test-GalleryViewer([IntPtr] $Gallery) {
+    $preview = Find-Control $Gallery Static -Visible
+    Assert-That ([bool] $preview) 'Gallery preview not found.'
+    for ($opening = 1; $opening -le 2; $opening++) {
+        Assert-That (@(Get-TestWindow '查看大图').Count -eq 0) 'Viewer was already open before the preview click.'
+        $session.ClickPreview($preview)
+        $viewer = Wait-For "gallery viewer on opening $opening" {
+            $found = @(Get-TestWindow '查看大图')
+            Assert-That ($found.Count -le 1) 'Multiple viewer windows.'
+            if ($found.Count -eq 1) { $found[0] }
+        }
+        $null = Wait-For 'viewer image control' { Find-Control $viewer Static -Visible }
+        Close-Child $viewer '查看大图'
+        Assert-That ($session.Visible($Gallery)) 'Gallery did not survive closing the viewer.'
+    }
+    Write-Host 'PASS: Gallery preview click opens and reopens the viewer.'
 }
 
 function Quit-Product {
@@ -392,6 +479,170 @@ function Read-Gallery([IntPtr] $List) {
         $rows[$date] = $Matches.ContainsKey(2)
     }
     if ($rows.Count) { return $rows }
+}
+
+function Open-LoadedGallery {
+    $window = Open-Child '查看/管理壁纸库' -Gallery
+    $list = Find-Control $window ListBox -Visible
+    Assert-That ([bool] $list) 'Gallery list not found.'
+    $rows = Wait-For 'dated gallery rows with an initialized selection' {
+        if ($session.Enabled($list) -and $session.SelectedRow($list) -ge 0) { Read-Gallery $list }
+    }
+    Assert-That ($rows.Count -eq $pairs.Count) 'Gallery row count differs from the fixture.'
+    foreach ($pair in $pairs) {
+        Assert-That ($rows.Contains($pair.Name.Substring(6))) "Fixture date not shown: $($pair.Name)."
+    }
+    return @{ Window = $window; List = $list; Rows = $rows }
+}
+
+function Test-CustomThemeWindow([IntPtr] $Theme) {
+    Click-Allowed $Theme '手动选择'
+    Assert-That (@(Get-TestWindow '').Count -eq 0) 'Unexpected untitled window before opening custom theme selection.'
+    Click-Allowed $Theme '…'
+    $picker = Wait-For 'custom theme selection window' {
+        $found = @(Get-TestWindow '' | Where-Object {
+            (Find-Control $_ ListBox -Visible) -and !(Find-Control $_ Button '刷新' -Visible)
+        })
+        Assert-That ($found.Count -le 1) 'Multiple custom theme selection windows.'
+        if ($found.Count -eq 1) { $found[0] }
+    }
+    $list = Find-Control $picker ListBox -Visible
+    $rows = Wait-For 'custom theme dates with the first row selected' {
+        if ($session.RowCount($list) -eq $pairs.Count -and $session.SelectedRow($list) -eq 0) { Read-Gallery $list }
+    }
+    foreach ($pair in $pairs) {
+        Assert-That ($rows.Contains($pair.Name.Substring(6))) "Fixture date missing from custom selection: $($pair.Name)."
+    }
+    Close-Child $picker '手动选择'
+    Assert-That ($session.Visible($Theme)) 'Theme window did not survive closing custom selection.'
+    Write-Host 'PASS: Custom theme picker opens and shows the isolated gallery dates.'
+}
+
+function Set-ThemeCheck([IntPtr] $Theme, [string] $Caption, [bool] $Checked) {
+    $button = Find-Control $Theme Button $Caption -Visible
+    Assert-That ($button -and $session.Enabled($button)) "Theme option '$Caption' is unavailable."
+    if ($session.CheckedState($button) -ne [int] $Checked) { Click-Allowed $Theme $Caption }
+    $null = Wait-For "theme option '$Caption' checked=$Checked" { $session.CheckedState($button) -eq [int] $Checked }
+}
+
+function Set-ThemeCombo([IntPtr] $Theme, [string] $Option) {
+    $controls = @($session.Windows($Theme) | Where-Object {
+        $session.Class($_) -eq 'ComboBox' -and $session.Visible($_) -and $session.ComboItemIndex($_, $Option) -ge 0
+    })
+    Assert-That ($controls.Count -eq 1) "Expected one theme combo with '$Option'."
+    $session.SelectComboItem($controls[0], $Option)
+}
+
+function Read-ThemeDialog([IntPtr] $Theme) {
+    $dialog = Wait-For 'theme export result' {
+        $found = @($session.Windows([IntPtr]::Zero) | Where-Object {
+            $session.Visible($_) -and $session.Class($_) -eq '#32770' -and
+                $session.Owner($_) -eq $Theme -and $session.Title($_) -eq '导出主题包'
+        })
+        Assert-That ($found.Count -le 1) 'Multiple theme export result dialogs.'
+        if ($found.Count -eq 1) { $found[0] }
+    }
+    $body = @($session.Windows($dialog) | Where-Object { $session.Class($_) -eq 'Static' -and $session.Visible($_) } |
+        ForEach-Object { $session.Text($_) } | Where-Object { $_ }) -join ' '
+    $session.CloseThemeResult($dialog, $Theme, '导出主题包')
+    $null = Wait-For 'theme result dismissed' { !$session.Alive($dialog) }
+    return $body
+}
+
+function Read-ThemePackage([string] $Path, [string] $Inspection) {
+    Assert-That (Test-Path -LiteralPath $Path -PathType Leaf) "Missing export: $Path"
+    $expand = Join-Path ([Environment]::SystemDirectory) 'expand.exe'
+    $listing = @(& $expand -D $Path)
+    Assert-That ($LASTEXITCODE -eq 0) "Cannot list theme cabinet: $Path"
+    $images = @(foreach ($line in $listing) {
+        if ($line -match '(?<![A-Za-z0-9_])(img[0-9]+\.jpg)\s*$') { $Matches[1] }
+    })
+    $null = New-Item -ItemType Directory -Path $Inspection
+    $null = & $expand '-F:main.theme' $Path $Inspection
+    Assert-That ($LASTEXITCODE -eq 0) "Cannot extract main.theme from $Path."
+    $themeFiles = @(Get-ChildItem -LiteralPath $Inspection -Recurse -File -Filter 'main.theme')
+    Assert-That ($themeFiles.Count -eq 1) "Expected one main.theme in $Path."
+    $sections = @{}
+    $section = $null
+    foreach ($line in (Get-Content -LiteralPath $themeFiles[0].FullName -Encoding UTF8)) {
+        if ($line -match '^\s*\[([^\]]+)\]\s*$') {
+            $section = $Matches[1]
+            $sections[$section] = @{}
+        } elseif ($section -and $line -match '^\s*([^;#=]+?)\s*=\s*(.*?)\s*$') {
+            $sections[$section][$Matches[1]] = $Matches[2]
+        }
+    }
+    return @{ Images = $images; Sections = $sections }
+}
+
+function Assert-ThemePackage([string] $Path, [bool] $Modern, [string] $Name, [string] $OutputDir) {
+    $package = Read-ThemePackage $Path (Join-Path $OutputDir "$Name-inspect")
+    $expectedImages = @(for ($i = 0; $i -lt $pairs.Count; $i++) { "img$i.jpg" })
+    Assert-That ((($package.Images | Sort-Object) -join ',') -ceq (($expectedImages | Sort-Object) -join ',')) "Wrong wallpaper entries in $Path."
+    $sections = $package.Sections
+    $values = @{
+        Theme = @{ DisplayName = $Name; BrandImage = 'brand.png' }
+        Slideshow = @{ ImagesRootPath = 'DesktopBackground'; Interval = '600000'; Shuffle = '1' }
+        'Control Panel\Desktop' = @{ TileWallpaper = '0'; WallpaperStyle = '6' }
+        MasterThemeSelector = @{ MTSM = $(if ($Modern) { 'RJSPBS' } else { 'DABJDKT' }) }
+        VisualStyles = $(if ($Modern) { @{ AppMode = 'Dark'; SystemMode = 'Dark'; AutoColorization = '1' } }
+            else { @{ Transparency = '0'; ColorizationColor = '0X6B74B8FC' } })
+    }
+    foreach ($group in $values.Keys) {
+        Assert-That ($sections.ContainsKey($group)) "Missing theme section [$group] in $Path."
+        foreach ($key in $values[$group].Keys) {
+            Assert-That ($sections[$group][$key] -eq $values[$group][$key]) "Unexpected [$group] $key in $Path."
+        }
+    }
+}
+
+function Test-ThemeExport([IntPtr] $Theme, [bool] $Modern, [string] $OutputDir) {
+    $kind = if ($Modern) { 'Windows 11/10/8.1/8 (*.deskthemepack)' } else { 'Windows 7/Vista (*.themepack)' }
+    $name = if ($Modern) { 'ui-modern' } else { 'ui-win7' }
+    $extension = if ($Modern) { '.deskthemepack' } else { '.themepack' }
+    $path = Join-Path $OutputDir ($name + $extension)
+    # ReplicaUi creates the name and directory edits in layout order.
+    $edits = @($session.Windows($Theme) | Where-Object { $session.Class($_) -eq 'Edit' -and $session.Visible($_) } |
+        Sort-Object { $session.ControlId($_) })
+    Assert-That ($edits.Count -eq 2) 'Expected the theme name and directory edits.'
+    $session.SetEdit($edits[0], $name)
+    $session.SetEdit($edits[1], $OutputDir)
+
+    Set-ThemeCheck $Theme '整个壁纸库' $true
+    Click-Allowed $Theme $kind
+    $kindRadio = Find-Control $Theme Button $kind -Visible
+    $null = Wait-For "theme kind '$kind' selected" { $session.CheckedState($kindRadio) -eq 1 }
+    $scopeRadio = Find-Control $Theme Button '整个壁纸库' -Visible
+    Assert-That ($session.CheckedState($scopeRadio) -eq 1) 'Whole-gallery theme scope was lost on switching format.'
+    Set-ThemeCombo $Theme '10分钟'
+    Set-ThemeCombo $Theme '适应'
+    Set-ThemeCombo $Theme '(16:9)1920x1080'
+    Set-ThemeCheck $Theme '乱序更换' $true
+    if ($Modern) {
+        Set-ThemeCheck $Theme '自动主题色' $true
+        Set-ThemeCheck $Theme '深色模式 (Win11/10)' $true
+    } else {
+        Set-ThemeCheck $Theme '透明效果' $false
+        Set-ThemeCombo $Theme 'Win7默认蓝(天空)'
+    }
+
+    Assert-That ($session.Text($edits[0]) -ceq $name -and $session.Text($edits[1]) -ceq $OutputDir) 'Theme output changed before export.'
+    Click-Allowed $Theme '开始导出'
+    $body = Read-ThemeDialog $Theme
+    Assert-That ($body.IndexOf($path, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        $body -match 'exported|导出(?:成功|完成)') "Unexpected theme export result: $body"
+    Assert-ThemePackage $path $Modern $name $OutputDir
+    $originalHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    $originalWrite = (Get-Item -LiteralPath $path).LastWriteTimeUtc
+    Write-Host "PASS: UI exported and verified $extension ($path)."
+
+    Assert-That ($session.Text($edits[0]) -ceq $name -and $session.Text($edits[1]) -ceq $OutputDir) 'Theme output changed before repeating export.'
+    Click-Allowed $Theme '开始导出'
+    $body = Read-ThemeDialog $Theme
+    Assert-That ($body -match 'Win32 error (80|183)[)]|同名|已经?存在') "Expected a same-name error, got: $body"
+    Assert-That ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ceq $originalHash -and
+        (Get-Item -LiteralPath $path).LastWriteTimeUtc -eq $originalWrite) "Same-name export changed $path."
+    Write-Host "PASS: Same-name export refused and original $extension preserved."
 }
 
 function Get-OrdinaryItem([string] $Path, [switch] $Temp) {
@@ -455,6 +706,12 @@ try {
     $payload = @(Get-ChildItem -LiteralPath $fixture.FullName -File -Force | Where-Object { $_.Name -match '^Image_[0-9]{8}\.(DDT|EDT)$' })
     $pairs = @($payload | Group-Object BaseName)
     Assert-That ($pairs.Count -ge 1 -and $pairs.Count -le 500) 'The fixture needs 1 to 500 dated wallpaper pairs.'
+    if ($pairs.Count -ge 2) {
+        foreach ($dependency in @('ForTheme.EDT', '7za.exe', 'cabarc.exe')) {
+            $helper = Get-OrdinaryItem (Join-Path $product.DirectoryName $dependency)
+            Assert-That ($helper -is [IO.FileInfo] -and $helper.Length -gt 0) "Theme export dependency missing: $dependency"
+        }
+    }
     foreach ($pair in $pairs) {
         $extensions = @($pair.Group.Extension | Sort-Object -Unique)
         Assert-That ($pair.Count -eq 2 -and $extensions.Count -eq 2) "Incomplete fixture pair: $($pair.Name)."
@@ -512,31 +769,35 @@ try {
             Wait-ForGalleryLoad
 
             if ($run -eq 1) {
-                Select-Page 1
+                Test-SevenDayUnavailable
                 Select-Page 2
-                Close-Child (Open-Child '选择壁纸源...' '选择新壁纸获取来源...') '选择壁纸源'
-                Close-Child (Open-Child '壁纸库位置...' '请指定新的壁纸库位置:') '壁纸库位置'
+                Test-ChildReopen '选择壁纸源...' '选择新壁纸获取来源...' Button '确定'
+                Test-ChildReopen '壁纸库位置...' '请指定新的壁纸库位置:' Button '确定修改/迁移'
                 Select-Page 3
-                Close-Child (Open-Child '导出为Windows 主题包' '导出为Windows主题包') '主题包'
+                $themeOutput = (New-Item -ItemType Directory -Path (Join-Path $dataRoot 'theme-output')).FullName
+                foreach ($modern in @($false, $true)) {
+                    $theme = Open-Child '导出为Windows 主题包' '导出为Windows主题包'
+                    $null = Wait-For 'theme dialog controls' { Find-Control $theme Button '开始导出' -Visible }
+                    if (!$modern) { Test-CustomThemeWindow $theme }
+                    if ($pairs.Count -ge 2) { Test-ThemeExport $theme $modern $themeOutput }
+                    Close-Child $theme '主题包'
+                }
+                Write-Host 'PASS: Theme window closes and reopens.'
+                if ($pairs.Count -lt 2) { Write-Host 'SKIP: Theme export and same-name protection require at least two fixture pairs.' }
                 Select-Page 4
-                Close-Child (Open-Child '获取 iOS 版' '胖哥每日壁纸 iOS版') '获取 iOS 版'
+                Test-ChildReopen '获取 iOS 版' '胖哥每日壁纸 iOS版' Button '点此查看'
                 Select-Page 0
-                Write-Host 'PASS: Five-page switching and source, relocation, theme and iOS window lifecycle.'
+                Write-Host 'PASS: Five-page switching.'
             }
 
             Select-Page 3
-            $gallery = Open-Child '查看/管理壁纸库' -Gallery
-            $list = Find-Control $gallery ListBox -Visible
-            Assert-That ([bool] $list) 'Gallery list not found.'
-            $rows = Wait-For 'dated gallery rows with an initialized selection' {
-                if ($session.Enabled($list) -and $session.SelectedRow($list) -ge 0) { Read-Gallery $list }
-            }
-            Assert-That ($rows.Count -eq $pairs.Count) 'Gallery row count differs from the fixture.'
-            foreach ($pair in $pairs) {
-                Assert-That ($rows.Contains($pair.Name.Substring(6))) "Fixture date not shown: $($pair.Name)."
-            }
+            $opened = Open-LoadedGallery
+            $gallery = $opened.Window
+            $list = $opened.List
+            $rows = $opened.Rows
 
             if ($run -eq 1) {
+                Test-GalleryViewer $gallery
                 $selected = $session.SelectedRow($list)
                 Assert-That ($selected -ge 0 -and $selected -lt $rows.Count) 'No initial gallery date selected.'
                 $testedDate = @($rows.Keys)[$selected]
@@ -559,6 +820,14 @@ try {
             }
             Write-Host "PASS: Gallery favorite state for $testedDate (run $run)."
             Close-Child $gallery '查看/管理壁纸库'
+            if ($run -eq 1) {
+                $reopened = Open-LoadedGallery
+                foreach ($date in $expected.Keys) {
+                    Assert-That ($reopened.Rows.Contains($date) -and $reopened.Rows[$date] -eq $expected[$date]) "Unexpected favorite state on reopening the gallery for $date."
+                }
+                Close-Child $reopened.Window '查看/管理壁纸库'
+                Write-Host 'PASS: Gallery closes and reopens with its rows and favorite state.'
+            }
             $exitAttempted = $true
             Quit-Product
         } finally {

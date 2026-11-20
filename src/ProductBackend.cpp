@@ -30,6 +30,15 @@ std::string ToUtf8(const std::wstring& value) {
     return result;
 }
 
+std::wstring ErrorText(const std::exception& error) {
+    const int length = static_cast<int>(strlen(error.what()));
+    const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, error.what(), length, nullptr, 0);
+    if (size <= 0) return L"Unknown error";
+    std::wstring result(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, error.what(), length, result.data(), size);
+    return result;
+}
+
 [[noreturn]] void Fail(const std::wstring& message) {
     throw std::runtime_error(ToUtf8(message));
 }
@@ -350,42 +359,40 @@ struct ProductBackend::Impl {
         return bytes;
     }
 
-    void RebuildSequence(bool reshuffle, const std::wstring& preserveDate = {}) {
-        std::wstring keep = preserveDate;
-        if (keep.empty() && !sequence.empty() && sequencePosition < sequence.size())
-            keep = DateOf(sequence[sequencePosition]);
-        sequence.clear(); sequencePosition = 0;
-        if (config.mode == SWP_DAILY) return;
+    std::vector<SWL_Record> BuildSequence(DWORD mode) {
+        std::vector<SWL_Record> result;
+        if (mode == SWP_DAILY) return result;
         for (const auto& record : allRecords)
-            if (config.mode != SWP_FAVORITES || record.favorite) sequence.push_back(record);
-        if ((config.changeRandom || reshuffle) && sequence.size() > 1) {
-            std::shuffle(sequence.begin(), sequence.end(), random);
-            if (!keep.empty() && DateOf(sequence.front()) == keep)
-                std::swap(sequence.front(), sequence.back());
-        }
-        if (sequence.empty()) return;
-        if (keep.empty() && config.changeRandom) {
-            std::uniform_int_distribution<size_t> choose(0, sequence.size() - 1);
-            sequencePosition = choose(random);
-            config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
-            return;
-        }
-        auto found = std::find_if(sequence.begin(), sequence.end(), [&](const SWL_Record& r) {
+            if (mode != SWP_FAVORITES || record.favorite) result.push_back(record);
+        if (config.changeRandom) std::shuffle(result.begin(), result.end(), random);
+        return result;
+    }
+
+    size_t SequenceStart(const std::vector<SWL_Record>& records, const std::wstring& keep) {
+        const auto found = std::find_if(records.begin(), records.end(), [&](const SWL_Record& r) {
             return DateOf(r) == keep;
         });
-        if (found != sequence.end()) sequencePosition = static_cast<size_t>(found - sequence.begin());
-        else {
-            const size_t requested = config.renderPoint ? static_cast<size_t>(config.renderPoint - 1) : 0;
-            sequencePosition = (std::min)(requested, sequence.size() - 1);
+        if (found != records.end()) return static_cast<size_t>(found - records.begin());
+        if (keep.empty() && config.changeRandom && !records.empty()) {
+            std::uniform_int_distribution<size_t> choose(0, records.size() - 1);
+            return choose(random);
         }
-        config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
+        return config.renderPoint && config.renderPoint <= records.size() ? config.renderPoint - 1 : 0;
+    }
+
+    void RebuildSequence() {
+        sequence = BuildSequence(config.mode);
+        sequencePosition = SequenceStart(sequence, hasCurrent ? DateOf(current) : std::wstring());
+        if (config.mode != SWP_DAILY) config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
+    }
+
+    const wchar_t* EmptyModeMessage(DWORD mode) const {
+        return mode == SWP_FAVORITES ? L"There are no favorite wallpapers to display"
+                                     : L"The gallery contains no wallpapers";
     }
 
     void UpdateInterval() {
-        DWORD count = config.mode == SWP_FAVORITES
-            ? static_cast<DWORD>(std::count_if(allRecords.begin(), allRecords.end(),
-                [](const SWL_Record& r) { return r.favorite != 0; }))
-            : static_cast<DWORD>(allRecords.size());
+        const DWORD count = static_cast<DWORD>(sequence.size());
         DWORD interval = 0;
         CheckPlatform(SWP_GetChangeInterval(&config, count, dailyFetchFailed ? TRUE : FALSE, &interval),
                       L"Calculating wallpaper interval");
@@ -410,36 +417,50 @@ struct ProductBackend::Impl {
         selectedImage = GetImage(selectedDate, LibrarySizeIndex(config.currentWall.size));
     }
 
-    void ApplyCurrent(const SWL_Record& record, const std::vector<unsigned char>& bytes,
-                      bool fromLibrary, bool doApply, bool isFavorite) {
+    void ApplyCurrent(const SWL_Record& record, std::vector<unsigned char> bytes,
+                      SWP_Config nextConfig, bool fromLibrary, bool doApply = true) {
         if (bytes.empty()) Fail(L"No image is available for the current wallpaper");
-        current = record; current.favorite = isFavorite ? 1 : 0; hasCurrent = true;
-        currentImage = bytes;
-        Put(config.currentWall.enddate, Get(record.date), L"current enddate");
-        Put(config.currentWall.title, Get(record.title), L"current title");
-        Put(config.currentWall.description, Get(record.description), L"current description");
-        Put(config.currentWall.author, Get(record.author), L"current author");
-        Put(config.currentWall.copyrightlink, Get(record.link), L"current copyright link");
-        config.currentWall.favorite = current.favorite ? 1 : 0;
-        if (fromLibrary) Put(config.galleryCurrent, Get(record.date), L"gallery current date");
-        WriteFile(currentImagePath, currentImage);
-        if (doApply) {
-            if (testMode) status = L"Test mode: wallpaper apply simulated";
-            else CheckPlatform(SWP_SetWallpaper(currentImagePath.c_str()), L"Applying wallpaper");
+        Put(nextConfig.currentWall.enddate, Get(record.date), L"current enddate");
+        Put(nextConfig.currentWall.title, Get(record.title), L"current title");
+        Put(nextConfig.currentWall.description, Get(record.description), L"current description");
+        Put(nextConfig.currentWall.author, Get(record.author), L"current author");
+        Put(nextConfig.currentWall.copyrightlink, Get(record.link), L"current copyright link");
+        nextConfig.currentWall.favorite = record.favorite ? 1 : 0;
+        if (fromLibrary) Put(nextConfig.galleryCurrent, Get(record.date), L"gallery current date");
+        WriteFile(currentImagePath, bytes);
+        if (doApply && !testMode) {
+            const DWORD result = SWP_SetWallpaper(currentImagePath.c_str());
+            if (result != ERROR_SUCCESS) {
+                if (!currentImage.empty()) WriteFile(currentImagePath, currentImage);
+                else {
+                    std::error_code ignored;
+                    fs::remove(currentImagePath, ignored);
+                }
+                FailCode(L"Applying wallpaper", result);
+            }
         }
-        SaveConfig();
+        config = nextConfig;
+        current = record; hasCurrent = true;
+        currentImage = std::move(bytes);
     }
 
-    void SelectSequenceCurrent(bool doApply) {
-        if (sequence.empty()) Fail(config.mode == SWP_FAVORITES
-            ? L"There are no favorite wallpapers to display"
-            : L"The gallery contains no wallpapers");
-        if (sequencePosition >= sequence.size()) sequencePosition = 0;
-        const auto record = sequence[sequencePosition];
-        const auto bytes = GetImage(DateOf(record), LibrarySizeIndex(config.currentWall.size));
-        ApplyCurrent(record, bytes, true, doApply, record.favorite != 0);
-        config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
-        SaveConfig();
+    void ApplySequenceRecord(const SWL_Record& record, size_t position, DWORD mode) {
+        SWP_Config nextConfig = config;
+        nextConfig.mode = mode;
+        nextConfig.renderPoint = static_cast<DWORD>(position + 1);
+        ApplyCurrent(record, GetImage(DateOf(record), LibrarySizeIndex(config.currentWall.size)), nextConfig, true);
+        sequencePosition = position;
+    }
+
+    bool SelectGalleryMode(DWORD mode, const std::wstring& date = {}) {
+        auto next = BuildSequence(mode);
+        if (next.empty()) return false;
+        const size_t position = SequenceStart(next, date.empty() && hasCurrent ? DateOf(current) : date);
+        if (!date.empty() && DateOf(next[position]) != date)
+            Fail(L"Selected record is not available in the gallery sequence");
+        ApplySequenceRecord(next[position], position, mode);
+        sequence = std::move(next);
+        return true;
     }
 
     SWN_Metadata FetchMetadata() {
@@ -507,7 +528,7 @@ struct ProductBackend::Impl {
         SWL_Record record = FindRecord(Get(config.currentWall.enddate), inLibrary);
         if (inLibrary) {
             auto bytes = GetImage(DateOf(record), LibrarySizeIndex(config.currentWall.size));
-            ApplyCurrent(record, bytes, true, false, record.favorite != 0);
+            ApplyCurrent(record, std::move(bytes), config, true, false);
             return;
         }
         std::error_code error;
@@ -525,56 +546,85 @@ struct ProductBackend::Impl {
         currentImage = ReadFile(currentImagePath); hasCurrent = true;
     }
 
-    void Refresh(bool explicitAction, std::wstring& message) {
-        SWN_Metadata metadata{};
-        try { metadata = FetchMetadata(); }
-        catch (...) { dailyFetchFailed = true; UpdateInterval(); SaveConfig(); throw; }
-        dailyFetchFailed = false;
+    void ApplyDaily(const SWN_Metadata& metadata, SWP_Config nextConfig) {
+        const std::wstring date = Get(metadata.enddate);
         bool inLibrary = false;
-        SWL_Record record = FindRecord(Get(metadata.enddate), inLibrary);
+        const SWL_Record record = FindRecord(date, inLibrary);
+        const DWORD size = nextConfig.currentWall.size;
+        if (inLibrary) ApplyCurrent(record, GetImage(date, LibrarySizeIndex(size)), nextConfig, true);
+        else ApplyCurrent(NetworkRecord(metadata), DownloadBytes(metadata, size), nextConfig, false);
+    }
+
+    void Refresh(std::wstring& message) {
+        const SWN_Metadata metadata = FetchMetadata();
         if (config.autoSave) {
             const bool added = ImportLatest(metadata);
+            if (added) RebuildSequence();
             message = added ? L"Latest wallpaper added to the gallery" : L"Latest wallpaper is already in the gallery";
-            record = FindRecord(Get(metadata.enddate), inLibrary);
-            if (!inLibrary) Fail(L"The latest wallpaper could not be read after import");
-            if (config.mode == SWP_DAILY) {
-                const auto bytes = GetImage(DateOf(record), LibrarySizeIndex(config.currentWall.size));
-                ApplyCurrent(record, bytes, true, true, record.favorite != 0);
-            }
-        } else if (config.mode == SWP_DAILY) {
-            const auto bytes = DownloadBytes(metadata, config.currentWall.size);
-            record = NetworkRecord(metadata);
-            ApplyCurrent(record, bytes, false, true, false);
-            message = L"Latest wallpaper downloaded at the selected size";
-        } else {
-            message = L"Latest metadata checked; current gallery wallpaper was left unchanged";
+        } else message = L"Latest metadata checked; current gallery wallpaper was left unchanged";
+        if (config.mode == SWP_DAILY) {
+            ApplyDaily(metadata, config);
+            dailyFetchFailed = false;
+            message += L"; daily wallpaper updated";
         }
-        if (!explicitAction && config.mode != SWP_DAILY && config.autoSave)
-            message = L"Latest wallpaper checked and gallery updated";
         UpdateInterval();
         SaveConfig();
     }
 
-    void Step(int direction) {
+    bool Step(int direction) {
         if (config.mode == SWP_DAILY) Fail(L"Previous/Next are available in gallery and favorites modes");
-        if (sequence.empty()) RebuildSequence(false);
-        if (sequence.empty()) Fail(config.mode == SWP_FAVORITES
-            ? L"There are no favorite wallpapers to display" : L"The gallery contains no wallpapers");
-        if (direction > 0 && sequencePosition + 1 == sequence.size() &&
-            config.changeRandom && sequence.size() > 1) {
-            const std::wstring previous = DateOf(sequence[sequencePosition]);
-            RebuildSequence(true, previous);
-            auto currentPosition = std::find_if(sequence.begin(), sequence.end(), [&](const SWL_Record& r) {
-                return DateOf(r) == previous;
-            });
-            if (currentPosition != sequence.end())
-                sequencePosition = static_cast<size_t>(currentPosition - sequence.begin());
-            sequencePosition = (sequencePosition + 1) % sequence.size();
+        if (sequence.size() < 2) return false;
+        const bool atCurrent = hasCurrent && DateOf(sequence[sequencePosition]) == DateOf(current);
+        if (atCurrent && direction > 0 && sequencePosition + 1 == sequence.size() && config.changeRandom) {
+            auto next = BuildSequence(config.mode);
+            if (DateOf(next.front()) == DateOf(current)) std::swap(next.front(), next.back());
+            ApplySequenceRecord(next.front(), 0, config.mode);
+            sequence = std::move(next);
+        } else {
+            size_t next = sequencePosition;
+            if (atCurrent && direction > 0) next = (sequencePosition + 1) % sequence.size();
+            else if (direction < 0) next = sequencePosition == 0 ? sequence.size() - 1 : sequencePosition - 1;
+            ApplySequenceRecord(sequence[next], next, config.mode);
         }
-        else if (direction > 0) sequencePosition = (sequencePosition + 1) % sequence.size();
-        else sequencePosition = sequencePosition == 0 ? sequence.size() - 1 : sequencePosition - 1;
-        config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
-        SelectSequenceCurrent(true);
+        SaveConfig();
+        return true;
+    }
+
+    std::wstring Tick() {
+        if (config.paused) return L"Automatic changes are paused";
+        if (config.mode == SWP_DAILY) {
+            if (testMode) return L"Test mode: automatic daily refresh skipped";
+            try {
+                const SWN_Metadata metadata = FetchMetadata();
+                if (config.autoSave) ImportLatest(metadata);
+                const bool changed = !hasCurrent || Get(metadata.enddate) != DateOf(current);
+                if (changed) {
+                    ApplyDaily(metadata, config);
+                    SaveConfig();
+                }
+                dailyFetchFailed = false;
+                return changed ? L"New daily wallpaper applied" : L"Daily wallpaper unchanged";
+            } catch (const std::exception& error) {
+                if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
+                dailyFetchFailed = true;
+                return L"Daily wallpaper update failed; retry scheduled: " + ErrorText(error);
+            }
+        }
+
+        std::wstring saveStatus;
+        if (config.autoSave && !testMode) {
+            try {
+                if (ImportLatest(FetchMetadata())) {
+                    RebuildSequence();
+                    SaveConfig();
+                    saveStatus = L"; latest wallpaper added to the gallery";
+                }
+            } catch (const std::exception& error) {
+                if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
+                saveStatus = L"; automatic gallery refresh failed: " + ErrorText(error);
+            }
+        }
+        return (Step(1) ? L"Automatic gallery advance completed" : L"Rotation needs at least two wallpapers") + saveStatus;
     }
 
     void UpdateBrowseSelection() {
@@ -626,49 +676,34 @@ struct ProductBackend::Impl {
         std::wstring message = L"Gallery and configuration loaded";
         if (config.mode == SWP_DAILY) {
             if (!testMode) {
-                try { Refresh(false, message); }
+                try { Refresh(message); }
                 catch (const std::exception& e) {
                     if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
                     dailyFetchFailed = true; UpdateInterval();
-                    if (!testMode && hasCurrent && !currentImage.empty())
+                    if (hasCurrent && !currentImage.empty())
                         CheckPlatform(SWP_SetWallpaper(currentImagePath.c_str()),
                                       L"Applying cached wallpaper after refresh failure");
-                    message = L"Network refresh failed; retry scheduled: ";
-                    const int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, e.what(),
-                        static_cast<int>(strlen(e.what())), nullptr, 0);
-                    if (chars > 0) { std::wstring wide(static_cast<size_t>(chars), L'\0');
-                        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, e.what(),
-                            static_cast<int>(strlen(e.what())), wide.data(), chars); message += wide; }
+                    message = L"Daily wallpaper update failed; retry scheduled: " + ErrorText(e);
                 }
             } else message = L"Test mode: automatic network refresh and wallpaper apply skipped";
         } else {
-            RebuildSequence(false);
-            if (!sequence.empty()) {
-                SelectSequenceCurrent(!testMode);
+            const bool loaded = SelectGalleryMode(config.mode);
+            if (loaded) {
                 message = testMode ? L"Test mode: initial gallery wallpaper loaded; apply skipped"
                                    : L"Gallery wallpaper loaded";
-            } else if (config.mode == SWP_FAVORITES) {
-                message = L"Favorites mode has no favorite records";
-            }
+            } else message = EmptyModeMessage(config.mode);
             if (!testMode && config.autoSave) {
+                bool added = false;
                 try {
-                    const SWN_Metadata metadata = FetchMetadata();
-                    const bool added = ImportLatest(metadata);
-                    if (added) {
-                        const std::wstring keep = hasCurrent ? Get(current.date) : std::wstring();
-                        RebuildSequence(false, keep);
-                        message = L"Latest wallpaper added to the gallery";
-                    } else if (message == L"Gallery wallpaper loaded") {
-                        message = L"Gallery loaded; latest wallpaper was already present";
-                    }
+                    added = ImportLatest(FetchMetadata());
                 } catch (const std::exception& e) {
                     if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
-                    const int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, e.what(),
-                        static_cast<int>(strlen(e.what())), nullptr, 0);
-                    message = L"Gallery loaded; automatic gallery refresh failed";
-                    if (chars > 0) { std::wstring wide(static_cast<size_t>(chars), L'\0');
-                        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, e.what(),
-                            static_cast<int>(strlen(e.what())), wide.data(), chars); message += L": " + wide; }
+                    message += L"; automatic gallery refresh failed: " + ErrorText(e);
+                }
+                if (added) {
+                    if (loaded) RebuildSequence();
+                    else SelectGalleryMode(config.mode);
+                    message += L"; latest wallpaper added to the gallery";
                 }
             }
         }
@@ -697,11 +732,11 @@ struct ProductBackend::Impl {
         case ProductAction::Initialize:
             Fail(L"Initialize is called through ProductBackend::Initialize");
         case ProductAction::Refresh:
-            Refresh(true, message); break;
+            Refresh(message); break;
         case ProductAction::Previous:
-            Step(-1); message = L"Previous wallpaper selected"; break;
+            message = Step(-1) ? L"Previous wallpaper selected" : L"Rotation needs at least two wallpapers"; break;
         case ProductAction::Next:
-            Step(1); message = L"Next wallpaper selected"; break;
+            message = Step(1) ? L"Next wallpaper selected" : L"Rotation needs at least two wallpapers"; break;
         case ProductAction::Favorite: {
             if (!hasCurrent) Fail(L"There is no current wallpaper to favorite");
             bool found = false; SWL_Record record = FindRecord(Get(current.date), found);
@@ -717,39 +752,43 @@ struct ProductBackend::Impl {
             LoadRecords(); record = FindRecord(Get(current.date), found);
             current.favorite = record.favorite; config.currentWall.favorite = static_cast<DWORD>(record.favorite);
             if (hasSelected && selectedDate == Get(record.date)) RefreshSelectedImage();
-            RebuildSequence(false, Get(record.date)); UpdateBrowseSelection(); SaveConfig();
+            RebuildSequence(); UpdateBrowseSelection(); SaveConfig();
             message = record.favorite ? L"Wallpaper added to favorites" : L"Wallpaper removed from favorites";
             break;
         }
-        case ProductAction::ChangeMode:
+        case ProductAction::ChangeMode: {
             if (request.value < SWP_DAILY || request.value > SWP_FAVORITES) Fail(L"Mode must be 1, 2, or 3");
-            config.mode = static_cast<DWORD>(request.value); RebuildSequence(false);
-            if (config.mode != SWP_DAILY && !sequence.empty()) SelectSequenceCurrent(true);
-            UpdateInterval(); SaveConfig(); message = L"Wallpaper mode changed"; break;
-        case ProductAction::ChangeSize:
-            if (request.value < 0 || request.value > 4) Fail(L"Size index must be 0..4");
-            config.currentWall.size = static_cast<DWORD>(request.value);
-            if (!hasCurrent) Fail(L"There is no current wallpaper");
-            {
-                bool inLibrary = false; SWL_Record record = FindRecord(Get(current.date), inLibrary);
-                std::vector<unsigned char> bytes;
-                if (inLibrary) bytes = GetImage(Get(record.date), LibrarySizeIndex(config.currentWall.size));
-                else {
-                    SWN_Metadata metadata{}; metadata.cbSize = sizeof(metadata);
-                    Put(metadata.enddate, Get(current.date), L"enddate");
-                    Put(metadata.title, Get(current.title), L"title");
-                    Put(metadata.description, Get(current.description), L"description");
-                    Put(metadata.author, Get(current.author), L"author");
-                    Put(metadata.copyrightlink, Get(current.link), L"copyright link");
-                    // An uncached daily image can only be resized by fetching metadata again.
-                    metadata = FetchMetadata();
-                    if (Get(metadata.enddate) != Get(current.date)) Fail(L"Current daily image is no longer the latest item");
-                    bytes = DownloadBytes(metadata, config.currentWall.size);
-                    record = NetworkRecord(metadata);
-                }
-                ApplyCurrent(record, bytes, inLibrary, true, record.favorite != 0);
+            const DWORD mode = static_cast<DWORD>(request.value);
+            if (mode == SWP_DAILY) {
+                SWP_Config nextConfig = config;
+                nextConfig.mode = mode;
+                if (!testMode) ApplyDaily(FetchMetadata(), nextConfig);
+                else config = nextConfig;
+                RebuildSequence();
+                dailyFetchFailed = false;
+            } else if (!SelectGalleryMode(mode)) {
+                message = EmptyModeMessage(mode);
+                break;
             }
-            RefreshSelectedImage(); message = L"Wallpaper size changed"; break;
+            SaveConfig(); message = L"Wallpaper mode changed"; break;
+        }
+        case ProductAction::ChangeSize: {
+            if (request.value < 0 || request.value > 4) Fail(L"Size index must be 0..4");
+            if (!hasCurrent) Fail(L"There is no current wallpaper");
+            SWP_Config nextConfig = config;
+            nextConfig.currentWall.size = static_cast<DWORD>(request.value);
+            bool inLibrary = false;
+            const auto record = FindRecord(DateOf(current), inLibrary);
+            if (inLibrary) {
+                ApplyCurrent(record, GetImage(DateOf(record), LibrarySizeIndex(nextConfig.currentWall.size)), nextConfig, true);
+            } else {
+                // An uncached daily image can only be resized while it is the latest item.
+                const auto metadata = FetchMetadata();
+                if (Get(metadata.enddate) != DateOf(current)) Fail(L"Current wallpaper is no longer the latest item");
+                ApplyDaily(metadata, nextConfig);
+            }
+            SaveConfig(); message = L"Wallpaper size changed"; break;
+        }
         case ProductAction::ChangeFrequency:
             if (request.value < 0 || request.value > 9) Fail(L"Frequency index must be 0..9");
             config.changeFreq = static_cast<DWORD>(request.value); UpdateInterval(); SaveConfig();
@@ -767,14 +806,14 @@ struct ProductBackend::Impl {
             break;
         case ProductAction::Random:
             if (request.value != 0 && request.value != 1) Fail(L"Random value must be 0 or 1");
-            config.changeRandom = static_cast<DWORD>(request.value); RebuildSequence(false);
+            config.changeRandom = static_cast<DWORD>(request.value); RebuildSequence();
             SaveConfig(); message = config.changeRandom ? L"Random sequence enabled" : L"Original gallery order restored"; break;
         case ProductAction::Pause:
             if (request.value != 0 && request.value != 1) Fail(L"Pause value must be 0 or 1");
             config.paused = static_cast<DWORD>(request.value); UpdateInterval(); SaveConfig();
             message = config.paused ? L"Automatic changes paused" : L"Automatic changes resumed"; break;
         case ProductAction::Reshuffle:
-            config.changeRandom = 1; RebuildSequence(true);
+            config.changeRandom = 1; RebuildSequence();
             UpdateInterval(); SaveConfig(); message = L"Wallpaper sequence reshuffled"; break;
         case ProductAction::BrowseSelect: {
             if (!request.text.empty()) SelectBrowse(request.text);
@@ -799,57 +838,39 @@ struct ProductBackend::Impl {
                 current.favorite = selected.favorite;
                 config.currentWall.favorite = static_cast<DWORD>(selected.favorite);
             }
-            RefreshSelectedImage(); RebuildSequence(false); SaveConfig();
+            RefreshSelectedImage(); RebuildSequence(); SaveConfig();
             message = selected.favorite ? L"Preview added to favorites" : L"Preview removed from favorites";
             break;
         }
         case ProductAction::BrowseDelete: {
             if (!hasSelected) Fail(L"Select a gallery record before deleting");
             if (allRecords.size() <= 2) Fail(L"The gallery must retain at least two records");
-            const std::wstring deleted = selectedDate;
-            const auto oldPosition = std::find_if(sequence.begin(), sequence.end(), [&](const SWL_Record& r) {
-                return DateOf(r) == deleted;
-            });
-            const size_t oldSequencePosition = oldPosition == sequence.end()
-                ? sequencePosition : static_cast<size_t>(oldPosition - sequence.begin());
             CheckLibrary(Library_Delete(selected.date), L"Deleting gallery record");
             LoadRecords();
             selectedDate.clear(); hasSelected = false; selectedImage.clear();
-            RebuildSequence(false);
-            if (!sequence.empty()) {
-                sequencePosition = (std::min)(oldSequencePosition, sequence.size() - 1);
-                config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
-            }
+            RebuildSequence();
             UpdateBrowseSelection(); UpdateInterval(); SaveConfig();
             message = L"Gallery record deleted"; break;
         }
         case ProductAction::BrowseApply:
             if (!hasSelected) Fail(L"Select a gallery record before applying it");
-            {
-                config.mode = SWP_GALLERY; RebuildSequence(false, selectedDate);
-                auto found = std::find_if(sequence.begin(), sequence.end(), [&](const SWL_Record& r) {
-                    return DateOf(r) == selectedDate;
-                });
-                if (found == sequence.end()) Fail(L"Selected record is not available in the gallery sequence");
-                sequencePosition = static_cast<size_t>(found - sequence.begin());
-                config.renderPoint = static_cast<DWORD>(sequencePosition + 1);
-                SelectSequenceCurrent(true); UpdateInterval(); SaveConfig();
-                message = testMode ? L"Test mode: preview application simulated"
-                                   : L"Preview applied as the current wallpaper";
-            }
+            if (!SelectGalleryMode(SWP_GALLERY, selectedDate)) Fail(EmptyModeMessage(SWP_GALLERY));
+            SaveConfig();
+            message = testMode ? L"Test mode: preview application simulated"
+                               : L"Preview applied as the current wallpaper";
             break;
         case ProductAction::ClearFavorites:
             CheckLibrary(Library_ClearFavorites(), L"Clearing favorites"); LoadRecords();
-            if (hasCurrent) { bool found = false; current = FindRecord(Get(current.date), found);
-                if (found) config.currentWall.favorite = static_cast<DWORD>(current.favorite); }
-            RebuildSequence(false); UpdateBrowseSelection(); UpdateInterval(); SaveConfig();
+            if (hasCurrent) { current.favorite = 0; config.currentWall.favorite = 0; }
+            if (config.mode == SWP_FAVORITES) config.mode = SWP_GALLERY;
+            RebuildSequence(); UpdateBrowseSelection(); UpdateInterval(); SaveConfig();
             message = L"All favorites cleared"; break;
         case ProductAction::Relocate:
             if (request.text.empty()) Fail(L"Relocation destination is required");
             CheckLibrary(Library_RelocateW(request.text.c_str()), L"Relocating gallery");
             galleryDir = fs::absolute(fs::path(request.text)).lexically_normal();
             Put(config.galleryDir, galleryDir.wstring(), L"galleryDir");
-            SaveConfig(); LoadRecords(); RebuildSequence(false); RefreshSelectedImage();
+            LoadRecords(); RebuildSequence(); SaveConfig(); RefreshSelectedImage();
             message = L"Gallery relocated"; break;
         case ProductAction::SaveCurrent:
             if (!hasCurrent || currentImage.empty()) Fail(L"There is no current image to save");
@@ -862,7 +883,7 @@ struct ProductBackend::Impl {
             message = L"Current wallpaper saved"; break;
         case ProductAction::StoreLatest:
             if (ImportLatest(FetchMetadata())) {
-                RebuildSequence(false); UpdateBrowseSelection();
+                RebuildSequence(); UpdateBrowseSelection(); SaveConfig();
                 message = L"已将本壁纸保存到壁纸库！";
             } else message = L"壁纸库里已经有这张啦！不用再保存啦！";
             break;
@@ -923,32 +944,7 @@ struct ProductBackend::Impl {
             if (request.value < SWN_GLOBAL || request.value > SWN_CUSTOM) Fail(L"Source must be 1, 2, or 3");
             config.source = static_cast<DWORD>(request.value); SaveConfig(); message = L"Wallpaper source updated"; break;
         case ProductAction::Tick:
-            if (testMode) { message = L"Test mode: automatic tick skipped"; break; }
-            if (config.paused) { message = L"Automatic changes are paused"; break; }
-            if (config.autoSave) {
-                const SWN_Metadata metadata = FetchMetadata();
-                ImportLatest(metadata);
-                if (config.mode == SWP_DAILY) {
-                    if (!hasCurrent || Get(metadata.enddate) != Get(current.date)) {
-                        bool found = false; SWL_Record record = FindRecord(Get(metadata.enddate), found);
-                        if (!found) Fail(L"Latest wallpaper import did not produce a gallery record");
-                        ApplyCurrent(record, GetImage(Get(record.date), LibrarySizeIndex(config.currentWall.size)), true, true,
-                                     record.favorite != 0);
-                    }
-                    dailyFetchFailed = false;
-                    message = L"Latest wallpaper checked; unchanged dates were not reapplied";
-                } else message = L"Latest wallpaper checked and saved when new";
-            } else if (config.mode == SWP_DAILY) {
-                const SWN_Metadata metadata = FetchMetadata();
-                if (!hasCurrent || Get(metadata.enddate) != Get(current.date)) {
-                    ApplyCurrent(NetworkRecord(metadata), DownloadBytes(metadata, config.currentWall.size),
-                                 false, true, false);
-                    message = L"New daily wallpaper applied";
-                } else message = L"Daily wallpaper unchanged; duplicate download skipped";
-                dailyFetchFailed = false;
-            }
-            else { Step(1); message = L"Automatic gallery advance completed"; }
-            UpdateInterval(); SaveConfig(); break;
+            message = Tick(); break;
         case ProductAction::Shutdown:
             Fail(L"Invalid action dispatch");
         }

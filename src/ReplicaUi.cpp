@@ -163,7 +163,8 @@ bool ReplicaUi::CreateChildren(Window& window) {
         // EXUI draws into the host while the XML child HWNDs are hidden.
         // Reproduce visibility from page membership rather than that HWND flag.
         if(c.page==-1||c.page==0) ShowWindow(child,SW_SHOWNA);
-        if(window.name==L"_启动窗口"&&std::wstring(c.name)==L"按钮EX2") EnableWindow(child,FALSE);
+        if(window.name==L"_启动窗口"&&(window.children.back().name==L"按钮EX2"||window.children.back().name==L"按钮EX13"))
+            EnableWindow(child,FALSE);
     }
     return success;
 }
@@ -241,7 +242,10 @@ void ReplicaUi::OnClose(HWND h) {
         if(handler_) handler_({L"_启动窗口",L"__close__",0,L"",-1,false});
         return;
     }
-    for(auto& entry:windows_)if(entry.second.hwnd==h){DestroyWindowState(entry.second);return;}
+    for(auto& entry:windows_)if(entry.second.hwnd==h){
+        if(!closeGuard_||closeGuard_(entry.second.name))DestroyWindowState(entry.second);
+        return;
+    }
 }
 void ReplicaUi::OnNcDestroy(HWND h) {
     for(auto& entry:windows_)if(entry.second.hwnd==h) {
@@ -368,6 +372,10 @@ void ReplicaUi::Show(const std::wstring& n) {
     ShowWindow(it->second.hwnd,SW_SHOWNORMAL);SetForegroundWindow(it->second.hwnd);
 }
 void ReplicaUi::Close(const std::wstring& n) {auto it=windows_.find(n);if(it!=windows_.end())DestroyWindowState(it->second);}
+HWND ReplicaUi::WindowHandle(const std::wstring& n) const {
+    const auto it=windows_.find(n);
+    return it==windows_.end()?nullptr:it->second.hwnd;
+}
 void ReplicaUi::SetText(const std::wstring& w,const std::wstring& c,const std::wstring& v){auto* x=Find(nullptr,w,c);if(x)SetWindowTextW(x->hwnd,v.c_str());}
 void ReplicaUi::SetChecked(const std::wstring& w,const std::wstring& c,bool v){auto* x=Find(nullptr,w,c);if(x)SendMessageW(x->hwnd,BM_SETCHECK,v?BST_CHECKED:BST_UNCHECKED,0);}
 void ReplicaUi::SetSelection(const std::wstring& w,const std::wstring& c,int i){
@@ -405,6 +413,16 @@ void ReplicaUi::SetVisible(const std::wstring& w,const std::wstring& c,bool visi
     auto* x=Find(nullptr,w,c);if(!x)return;
     x->visible=visible;
     ShowWindow(x->hwnd,visible&&(x->page==-1||(x->page>=0&&TabCtrl_GetCurSel(GetParent(x->hwnd))==x->page))?SW_SHOWNA:SW_HIDE);
+}
+void ReplicaUi::SetProgress(const std::wstring& w,const std::wstring& c,int position,bool busy) {
+    auto* child=Find(nullptr,w,c);
+    if(!child||child->type!=L"Lib3.12")return;
+    const HWND hwnd=child->hwnd;
+    const LONG_PTR style=GetWindowLongPtrW(hwnd,GWL_STYLE);
+    if(!busy)SendMessageW(hwnd,PBM_SETMARQUEE,FALSE,0);
+    SetWindowLongPtrW(hwnd,GWL_STYLE,busy?style|PBS_MARQUEE:style&~PBS_MARQUEE);
+    if(busy)SendMessageW(hwnd,PBM_SETMARQUEE,TRUE,50);
+    else SendMessageW(hwnd,PBM_SETPOS,position,0);
 }
 void ReplicaUi::SetImageMode(const std::wstring& w,const std::wstring& c,ImageMode mode) {
     auto* child=Find(nullptr,w,c);if(!child)return;
