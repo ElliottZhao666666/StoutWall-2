@@ -12,7 +12,8 @@ data root for inspection. Exit code 0 means all automated checks passed; 1 means
 failure, including missing prerequisites. A running legacy instance is left alone.
 
 The script checks child windows on reopen, disabled seven-day entries, gallery preview
-click notifications, both theme package formats and same-name refusal. Use a
+click notifications, both theme package formats, UHD favorites, invalid names
+and same-name refusal. Use a
 fixture with at least two dated pairs for theme export. Packages stay in the
 test data root and are never installed. Source selection is saved through the
 isolated UI-test path without a network request. iOS copy/open actions are
@@ -452,7 +453,7 @@ function Find-Control([IntPtr] $Parent, [string] $Class, [string] $Caption = '',
 
 function Click-Allowed([IntPtr] $Parent, [string] $Caption) {
     $allowed = @('选择壁纸源...', '壁纸库位置...', '查看/管理壁纸库', '导出为Windows 主题包',
-        '获取 iOS 版', '退出软件', '收藏', '取消收藏', '手动选择', '…', '整个壁纸库', '开始导出',
+        '获取 iOS 版', '退出软件', '收藏', '取消收藏', '手动选择', '…', '整个壁纸库', '仅收藏', '开始导出',
         '检测可用性', '确定', '必应(www.bing.com)', '必应中国(cn.bing.com) [默认]',
         '胖哥自建API(bingpics.ybjun.com)', '点此查看',
         'Windows 7/Vista (*.themepack)', 'Windows 11/10/8.1/8 (*.deskthemepack)',
@@ -754,6 +755,12 @@ function Test-ClearFavorites([int] $BeforeCount) {
     $cleared = Open-LoadedGallery
     Assert-That (($cleared.Rows.Values -notcontains $true) -and $cleared.Rows.Count -eq $BeforeCount) 'Clearing favorites removed records or left favorite marks.'
     Close-Child $cleared.Window '查看/管理壁纸库'
+    $theme = Open-Child '导出为Windows 主题包' '导出为Windows主题包'
+    $favoriteScope = Wait-For 'empty-favorites theme form' { Find-Control $theme Button '仅收藏' -Visible }
+    Assert-That (!$session.Enabled($favoriteScope)) 'Favorites theme scope remained enabled after clearing favorites.'
+    $allScope = Find-Control $theme Button '整个壁纸库' -Visible
+    Assert-That ($session.Enabled($allScope) -and $session.CheckedState($allScope) -eq 1) 'Whole-gallery scope unavailable with zero favorites.'
+    Close-Child $theme '主题包'
     Write-Host 'PASS: Clear-favorites cancel, two confirmations, zero-favorites prompt and intact gallery.'
 }
 
@@ -824,18 +831,18 @@ function Set-ThemeCombo([IntPtr] $Theme, [string] $Option) {
     $session.SelectComboItem($controls[0], $Option)
 }
 
-function Read-ThemeDialog([IntPtr] $Theme) {
+function Read-ThemeDialog([IntPtr] $Theme, [string] $Title = '导出主题包') {
     $dialog = Wait-For 'theme export result' {
         $found = @($session.Windows([IntPtr]::Zero) | Where-Object {
             $session.Visible($_) -and $session.Class($_) -eq '#32770' -and
-                $session.Owner($_) -eq $Theme -and $session.Title($_) -eq '导出主题包'
+                $session.Owner($_) -eq $Theme -and $session.Title($_) -eq $Title
         })
         Assert-That ($found.Count -le 1) 'Multiple theme export result dialogs.'
         if ($found.Count -eq 1) { $found[0] }
     }
     $body = @($session.Windows($dialog) | Where-Object { $session.Class($_) -eq 'Static' -and $session.Visible($_) } |
         ForEach-Object { $session.Text($_) } | Where-Object { $_ }) -join ' '
-    $session.CloseThemeResult($dialog, $Theme, '导出主题包')
+    $session.CloseThemeResult($dialog, $Theme, $Title)
     $null = Wait-For 'theme result dismissed' { !$session.Alive($dialog) }
     return $body
 }
@@ -866,9 +873,9 @@ function Read-ThemePackage([string] $Path, [string] $Inspection) {
     return @{ Images = $images; Sections = $sections }
 }
 
-function Assert-ThemePackage([string] $Path, [bool] $Modern, [string] $Name, [string] $OutputDir) {
+function Assert-ThemePackage([string] $Path, [bool] $Modern, [string] $Name, [string] $OutputDir, [int] $ImageCount) {
     $package = Read-ThemePackage $Path (Join-Path $OutputDir "$Name-inspect")
-    $expectedImages = @(for ($i = 0; $i -lt $pairs.Count; $i++) { "img$i.jpg" })
+    $expectedImages = @(for ($i = 0; $i -lt $ImageCount; $i++) { "img$i.jpg" })
     Assert-That ((($package.Images | Sort-Object) -join ',') -ceq (($expectedImages | Sort-Object) -join ',')) "Wrong wallpaper entries in $Path."
     $sections = $package.Sections
     $values = @{
@@ -887,9 +894,10 @@ function Assert-ThemePackage([string] $Path, [bool] $Modern, [string] $Name, [st
     }
 }
 
-function Test-ThemeExport([IntPtr] $Theme, [bool] $Modern, [string] $OutputDir) {
+function Test-ThemeExport([IntPtr] $Theme, [bool] $Modern, [string] $OutputDir, [int] $FavoriteCount = 0) {
     $kind = if ($Modern) { 'Windows 11/10/8.1/8 (*.deskthemepack)' } else { 'Windows 7/Vista (*.themepack)' }
     $name = if ($Modern) { 'ui-modern' } else { 'ui-win7' }
+    if ($FavoriteCount -gt 0) { $name = '界面收藏-' + $name }
     $extension = if ($Modern) { '.deskthemepack' } else { '.themepack' }
     $path = Join-Path $OutputDir ($name + $extension)
     # ReplicaUi creates the name and directory edits in layout order.
@@ -899,15 +907,16 @@ function Test-ThemeExport([IntPtr] $Theme, [bool] $Modern, [string] $OutputDir) 
     $session.SetEdit($edits[0], $name)
     $session.SetEdit($edits[1], $OutputDir)
 
-    Set-ThemeCheck $Theme '整个壁纸库' $true
+    $scope = if ($FavoriteCount -gt 0) { '仅收藏' } else { '整个壁纸库' }
+    Set-ThemeCheck $Theme $scope $true
     Click-Allowed $Theme $kind
     $kindRadio = Find-Control $Theme Button $kind -Visible
     $null = Wait-For "theme kind '$kind' selected" { $session.CheckedState($kindRadio) -eq 1 }
-    $scopeRadio = Find-Control $Theme Button '整个壁纸库' -Visible
-    Assert-That ($session.CheckedState($scopeRadio) -eq 1) 'Whole-gallery theme scope was lost on switching format.'
+    $scopeRadio = Find-Control $Theme Button $scope -Visible
+    Assert-That ($session.CheckedState($scopeRadio) -eq 1) 'Theme scope was lost on switching format.'
     Set-ThemeCombo $Theme '10分钟'
     Set-ThemeCombo $Theme '适应'
-    Set-ThemeCombo $Theme '(16:9)1920x1080'
+    Set-ThemeCombo $Theme $(if ($FavoriteCount -gt 0) { '(4K16:9)3840x2160' } else { '(16:9)1920x1080' })
     Set-ThemeCheck $Theme '乱序更换' $true
     if ($Modern) {
         Set-ThemeCheck $Theme '自动主题色' $true
@@ -917,12 +926,24 @@ function Test-ThemeExport([IntPtr] $Theme, [bool] $Modern, [string] $OutputDir) 
         Set-ThemeCombo $Theme 'Win7默认蓝(天空)'
     }
 
+    if ($Modern -and $FavoriteCount -gt 0) {
+        $beforeFiles = @(Get-ChildItem -LiteralPath $OutputDir -Recurse -File | ForEach-Object FullName)
+        $session.SetEdit($edits[0], 'CON')
+        Click-Allowed $Theme '开始导出'
+        $body = Read-ThemeDialog $Theme '请修改主题名称'
+        Assert-That ($body -match '系统保留名称') "Expected a useful invalid-name message: $body"
+        $afterFiles = @(Get-ChildItem -LiteralPath $OutputDir -Recurse -File | ForEach-Object FullName)
+        Assert-That (($beforeFiles -join '|') -ceq ($afterFiles -join '|')) 'Invalid-name export created files.'
+        $session.SetEdit($edits[0], $name)
+        Write-Host 'PASS: Reserved theme name rejected; corrected Chinese name can be retried in the same form.'
+    }
     Assert-That ($session.Text($edits[0]) -ceq $name -and $session.Text($edits[1]) -ceq $OutputDir) 'Theme output changed before export.'
     Click-Allowed $Theme '开始导出'
     $body = Read-ThemeDialog $Theme
     Assert-That ($body.IndexOf($path, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-        $body -match 'exported|导出(?:成功|完成)') "Unexpected theme export result: $body"
-    Assert-ThemePackage $path $Modern $name $OutputDir
+        $body -match 'exported|(?:已)?导出(?:成功|完成|：)') "Unexpected theme export result: $body"
+    $imageCount = if ($FavoriteCount -gt 0) { $FavoriteCount } else { $pairs.Count }
+    Assert-ThemePackage $path $Modern $name $OutputDir $imageCount
     $originalHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
     $originalWrite = (Get-Item -LiteralPath $path).LastWriteTimeUtc
     Write-Host "PASS: UI exported and verified $extension ($path)."
@@ -1093,12 +1114,16 @@ try {
                 Test-SourceSelection
                 Test-ChildReopen '壁纸库位置...' '请指定新的壁纸库位置:' Button '确定修改/迁移'
                 Select-Page 3
+                $initialGallery = Open-LoadedGallery
+                $favoriteCount = @($initialGallery.Rows.Values | Where-Object { $_ }).Count
+                Close-Child $initialGallery.Window '查看/管理壁纸库'
                 $themeOutput = (New-Item -ItemType Directory -Path (Join-Path $dataRoot 'theme-output')).FullName
                 foreach ($modern in @($false, $true)) {
                     $theme = Open-Child '导出为Windows 主题包' '导出为Windows主题包'
                     $null = Wait-For 'theme dialog controls' { Find-Control $theme Button '开始导出' -Visible }
                     if (!$modern) { Test-CustomThemeWindow $theme }
                     if ($pairs.Count -ge 2) { Test-ThemeExport $theme $modern $themeOutput }
+                    if ($favoriteCount -ge 2) { Test-ThemeExport $theme $modern $themeOutput $favoriteCount }
                     Close-Child $theme '主题包'
                 }
                 Write-Host 'PASS: Theme window closes and reopens.'

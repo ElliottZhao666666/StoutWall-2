@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "PlatformApi.h"
+#include "ThemeName.hpp"
 #include <windows.h>
 #include <objbase.h>
 #include <shellapi.h>
@@ -85,7 +86,7 @@ void SaveFields(Ini&i,const SWP_Config&c){auto set=[&](const wchar_t*s,const wch
 std::wstring Quote(const std::wstring&s){std::wstring q=L"\"";size_t slashes=0;for(wchar_t c:s){if(c==L'\\'){++slashes;continue;}if(c==L'"'){q.append(slashes*2+1,L'\\');q+=c;slashes=0;continue;}q.append(slashes,L'\\');slashes=0;q+=c;}q.append(slashes*2,L'\\');q+=L'"';return q;}
 DWORD Run(const std::wstring&exe,const std::vector<std::wstring>&args,const std::wstring&cwd,const SWP_Options*o,DWORD fallback,DWORD*exitCode){if(!Absolute(exe.c_str()))return ERROR_INVALID_NAME;if(Cancel(o?o->cancelEvent:nullptr))return ERROR_CANCELLED;std::wstring cmd=Quote(exe);for(const auto&a:args)cmd+=L" "+Quote(a);std::vector<wchar_t>buf(cmd.begin(),cmd.end());buf.push_back(0);STARTUPINFOW si{};si.cb=sizeof(si);si.dwFlags=STARTF_USESHOWWINDOW;si.wShowWindow=SW_HIDE;PROCESS_INFORMATION pi{};if(!CreateProcessW(exe.c_str(),buf.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,cwd.empty()?nullptr:cwd.c_str(),&si,&pi))return LastError();CloseHandle(pi.hThread);ULONGLONG start=GetTickCount64();DWORD timeout=Timeout(o,fallback),result=ERROR_SUCCESS,code=0;for(;;){if(Cancel(o?o->cancelEvent:nullptr)){TerminateProcess(pi.hProcess,ERROR_CANCELLED);WaitForSingleObject(pi.hProcess,5000);result=ERROR_CANCELLED;break;}ULONGLONG elapsed=GetTickCount64()-start;if(elapsed>=timeout){TerminateProcess(pi.hProcess,ERROR_TIMEOUT);WaitForSingleObject(pi.hProcess,5000);result=ERROR_TIMEOUT;break;}DWORD wait=WaitForSingleObject(pi.hProcess,static_cast<DWORD>(std::min<ULONGLONG>(100,timeout-elapsed)));if(wait==WAIT_OBJECT_0){if(!GetExitCodeProcess(pi.hProcess,&code))result=LastError();else if(code!=0)result=ERROR_INSTALL_FAILURE;break;}if(wait==WAIT_FAILED){result=LastError();break;}}CloseHandle(pi.hProcess);if(exitCode)*exitCode=code;return result;}
 std::wstring Guid(){GUID g{};if(FAILED(CoCreateGuid(&g)))return L"";wchar_t b[40]{};if(!StringFromGUID2(g,b,_countof(b)))return L"";std::wstring s=b;std::transform(s.begin(),s.end(),s.begin(),towupper);return s;}
-bool SafeName(const wchar_t*n){if(!n||!*n||wcslen(n)>100)return false;std::wstring s=n;if(s==L"."||s==L".."||s.back()==L'.'||s.back()==L' ')return false;return s.find_first_of(L"<>:\"/\\|?*") == s.npos;}
+bool SafeName(const wchar_t*n){return n&&stoutwall::ValidThemeName(n);}
 struct CopyContext { HANDLE cancel; ULONGLONG start; DWORD timeout; };
 
 static DWORD CALLBACK CopyProgress(LARGE_INTEGER, LARGE_INTEGER, LARGE_INTEGER,
@@ -122,7 +123,50 @@ DWORD CreateThemeTempDirectory(const wchar_t*outputDir,TempCleanup&cleanup){
  }
  cleanup.path.clear();return ERROR_ALREADY_EXISTS;
 }
-bool ThemeImage(const wchar_t*p,DWORD index){static const DWORD xy[5][2]={{3840,2160},{1920,1200},{1920,1080},{1024,768},{1080,1920}};if(index>=5)return false;std::ifstream f(fs::path(p),std::ios::binary);if(!f)return false;std::vector<unsigned char>b(1024*1024);f.read(reinterpret_cast<char*>(b.data()),static_cast<std::streamsize>(b.size()));b.resize(static_cast<size_t>(f.gcount()));if(b.size()<12||b[0]!=255||b[1]!=216)return false;size_t q=2;while(q+1<b.size()){if(b[q++]!=255)return false;while(q<b.size()&&b[q]==255)++q;if(q>=b.size())return false;unsigned char m=b[q++];if(m==217||m==218)break;if(m==1||(m>=208&&m<=215))continue;if(q+2>b.size())return false;size_t n=(b[q]<<8)|b[q+1];if(n<2||n>b.size()-q)return false;bool sof=(m>=192&&m<=195)||(m>=197&&m<=199)||(m>=201&&m<=203)||(m>=205&&m<=207);if(sof&&n>=7){DWORD h=(b[q+3]<<8)|b[q+4],w=(b[q+5]<<8)|b[q+6];return w==xy[index][0]&&h==xy[index][1];}q+=n;}return false;}
+bool ThemeImage(const wchar_t*p,DWORD index){
+ static const DWORD xy[5][2]={{3840,2160},{1920,1200},{1920,1080},{1024,768},{1080,1920}};
+ if(index>=5)return false;
+ std::ifstream f(fs::path(p),std::ios::binary|std::ios::ate);if(!f)return false;
+ const auto length=f.tellg();if(length<12||length>64*1024*1024)return false;
+ f.seekg(-2,std::ios::end);unsigned char tail[2]{};
+ if(!f.read(reinterpret_cast<char*>(tail),2)||tail[0]!=255||tail[1]!=217)return false;
+ f.seekg(0);std::vector<unsigned char>b(static_cast<size_t>((std::min)(length,std::streampos(1024*1024))));
+ if(!f.read(reinterpret_cast<char*>(b.data()),static_cast<std::streamsize>(b.size())))return false;
+ if(b[0]!=255||b[1]!=216)return false;
+ size_t q=2;
+ while(q+1<b.size()){
+  if(b[q++]!=255)return false;while(q<b.size()&&b[q]==255)++q;if(q>=b.size())return false;
+  unsigned char m=b[q++];if(m==217||m==218)break;if(m==1||(m>=208&&m<=215))continue;
+  if(q+2>b.size())return false;size_t n=(b[q]<<8)|b[q+1];if(n<2||n>b.size()-q)return false;
+  bool sof=(m>=192&&m<=195)||(m>=197&&m<=199)||(m>=201&&m<=203)||(m>=205&&m<=207);
+  if(sof&&n>=7){
+   DWORD h=(b[q+3]<<8)|b[q+4],w=(b[q+5]<<8)|b[q+6];
+   // The original UHD slot also contains 4500x2531 and 4596x2583 JPEGs.
+   // Preserve these originals; the other four named slots keep exact dimensions.
+   if(index==0)return w>=3840&&h>=2160&&w<=12000&&h<=12000;
+   return w==xy[index][0]&&h==xy[index][1];
+  }
+  q+=n;
+ }
+ return false;
+}
+DWORD PrepareThemeIni(const std::wstring&file){
+ // Profile APIs preserve Unicode only when the existing INI is UTF-16LE.
+ // Convert the isolated template before adding user-provided display names.
+ std::wstring text;if(!ReadWide(file,text))return ERROR_BAD_FORMAT;
+ HANDLE f=CreateFileW(file.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+ if(f==INVALID_HANDLE_VALUE)return LastError();
+ const wchar_t bom=0xfeff;DWORD wrote=0,error=ERROR_SUCCESS;
+ const auto write=[&](const void*bytes,DWORD size){
+  if(!WriteFile(f,bytes,size,&wrote,nullptr)){error=LastError();return false;}
+  if(wrote!=size){error=ERROR_WRITE_FAULT;return false;}
+  return true;
+ };
+ if(write(&bom,sizeof(bom))&&!text.empty())
+  write(text.data(),static_cast<DWORD>(text.size()*sizeof(wchar_t)));
+ if(!CloseHandle(f)&&!error)error=LastError();
+ return error;
+}
 bool WriteThemeValue(const std::wstring&file,const wchar_t*section,const wchar_t*key,const std::wstring&value){return WritePrivateProfileStringW(section,key,value.c_str(),file.c_str())!=FALSE;}
 }
 
@@ -158,6 +202,7 @@ extern "C" DWORD SWP_CALL SWP_ExportTheme(const SWP_ThemeOptions*t,const SWP_Pat
  const wchar_t* password = t->templatePassword[0] ? t->templatePassword : L"YfsTyyFR,JChSgJCr,R4t,f4GYDbceDH";
  DWORD e=SWP_ExtractArchive(t->sevenZipExe,t->templateArchive,root.c_str(),password,o,exitCode);if(e)return e;
  std::wstring ini=root+L"\\ThemeBase.ini",desktop=root+L"\\DesktopBackground";if(!fs::is_regular_file(ini)||!fs::is_directory(desktop)||!fs::is_regular_file(root+L"\\brand.png"))return ERROR_FILE_NOT_FOUND;
+ e=PrepareThemeIni(ini);if(e)return e;
  static const wchar_t*colors[]={L"0XC40078D4",L"0XC40078D7",L"0X6B74B8FC",L"0XA80046AD",L"0X8032CDCD",L"0X6614A600",L"0X6697D937",L"0X54FADC0E",L"0X80FF9C00",L"0XA8CE0F0F",L"0X66FF0099",L"0X70FCC7F8",L"0X856E3BA1",L"0X528D5A94",L"0X6698844C",L"0XA84F1B1B",L"0X80555555",L"0X54FCFCFC"};
  static const wchar_t*styles[]={L"0",L"2",L"6",L"10"};static const wchar_t*intervals[]={L"60000",L"600000",L"1800000",L"3600000",L"21600000",L"86400000"};
  auto write=[&](const wchar_t*s,const wchar_t*k,const std::wstring&v){return WriteThemeValue(ini,s,k,v);};

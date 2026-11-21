@@ -31,17 +31,17 @@ DWORD Style(const ControlDef& c) {
     // program makes them visible during startup. Recreate that runtime state.
     const DWORD base=WS_CHILD|WS_CLIPSIBLINGS;
     if(t==L"Lib3.2") return base|BS_GROUPBOX|WS_CLIPCHILDREN;
-    if(t==L"Lib3.3") return base|WS_TABSTOP|TCS_TABS|TCS_SINGLELINE|WS_CLIPCHILDREN;
+    if(t==L"Lib3.3") return base|WS_TABSTOP|TCS_TABS|TCS_SINGLELINE|TCS_FIXEDWIDTH|WS_CLIPCHILDREN;
     if(t==L"Lib3.5") return base|SS_LEFT|SS_NOPREFIX|SS_NOTIFY;
     if(t==L"Lib3.7"||(t==L"Lib3.8"&&std::wstring(c.window)==L"大图窗口")) return base|WS_TABSTOP|BS_OWNERDRAW;
     if(t==L"Lib3.6"||t==L"Lib3.8"||t==L"Lib3.9") return base|WS_TABSTOP|BS_PUSHBUTTON;
-    if(t==L"Lib3.10") return base|BS_AUTORADIOBUTTON|BS_NOTIFY;
-    if(t==L"Lib3.11") return base|BS_AUTOCHECKBOX|BS_NOTIFY;
+    if(t==L"Lib3.10") return base|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_NOTIFY;
+    if(t==L"Lib3.11") return base|WS_TABSTOP|BS_AUTOCHECKBOX|BS_NOTIFY|BS_MULTILINE;
     if(t==L"Lib3.12") return base|PBS_SMOOTH;
     if(t==L"Lib3.15") return base|WS_TABSTOP|WS_BORDER|ES_LEFT|(ReadOnlyEdit(c)
         ? ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL : ES_AUTOHSCROLL);
     if(t==L"Lib3.16") return base|WS_TABSTOP|CBS_DROPDOWNLIST|WS_VSCROLL;
-    if(t==L"Lib3.18") return base|WS_BORDER|LBS_NOTIFY|WS_VSCROLL;
+    if(t==L"Lib3.18") return base|WS_TABSTOP|WS_BORDER|LBS_NOTIFY|WS_VSCROLL;
     if(t==L"Lib3.4") return base|SS_OWNERDRAW|SS_NOTIFY|WS_CLIPCHILDREN;
     return base;
 }
@@ -61,11 +61,16 @@ const wchar_t* Class(const ControlDef& c) {
 ReplicaUi::ReplicaUi(HINSTANCE h,EventHandler handler,HICON icon,const v6::AssetModule& assets)
     : instance_(h),assets_(assets),icon_(icon),handler_(std::move(handler)) {
     if(HDC dc=GetDC(nullptr)) { dpi_=GetDeviceCaps(dc,LOGPIXELSX); ReleaseDC(nullptr,dc); }
+    // The original EXUI controls use Microsoft YaHei, not the stock bitmap font.
+    font_=CreateFontW(-MulDiv(9,dpi_,72),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,
+        DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
+        DEFAULT_PITCH|FF_DONTCARE,L"Microsoft YaHei");
     D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,d2d_.GetAddressOf());
     RegisterClass();
 }
 ReplicaUi::~ReplicaUi() {
     for(auto& item:windows_) DestroyWindowState(item.second);
+    if(font_)DeleteObject(font_);
     if(ownsClass_) UnregisterClassW(kClassName,instance_);
     if(icon_) DestroyIcon(icon_);
 }
@@ -138,18 +143,21 @@ bool ReplicaUi::CreateChildren(Window& window) {
         UINT id=nextId_++;
         int x=MulDiv(c.x,dpi_,96),y=MulDiv(c.y,dpi_,96);
         int width=MulDiv(c.w,dpi_,96),height=MulDiv(c.h,dpi_,96);
+        if(window.name==L"主题包窗口"&&type==L"Lib3.5"&&std::wstring(c.parent)==L"分组框EX3")
+            width=(std::min)(width,MulDiv(110,dpi_,96));
         if(window.name==L"大图窗口") {
             RECT bounds{};GetClientRect(window.hwnd,&bounds);
             if(type==L"Lib3.4") { width=bounds.right;height=bounds.bottom; }
             if(type==L"Lib3.8") { x=(bounds.right-width)/2;y=MulDiv(35,dpi_,96); }
         }
-        HWND child=CreateWindowExW(0,cls,c.text,Style(c),x,y,width,
+        const DWORD exStyle=type==L"Lib3.2"||type==L"Lib3.3"?WS_EX_CONTROLPARENT:0;
+        HWND child=CreateWindowExW(exStyle,cls,c.text,Style(c),x,y,width,
             type==L"Lib3.16" ? height+MulDiv(170,dpi_,96) : height,parent,
             reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),instance_,nullptr);
         if(!child) { success=false;continue; }
         if(parent!=window.hwnd&&!AttachSubclass(window,parent)) success=false;
         if(type==L"Lib3.4"&&!AttachSubclass(window,child)) success=false;
-        SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);
+        SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font_?font_:GetStockObject(DEFAULT_GUI_FONT)),TRUE);
         if(type==L"Lib3.15") SendMessageW(child,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(4,4));
         if(type==L"Lib3.16") SendMessageW(child,CB_SETITEMHEIGHT,static_cast<WPARAM>(-1),height-MulDiv(6,dpi_,96));
         if(type==L"Lib3.3") {
@@ -171,7 +179,33 @@ bool ReplicaUi::CreateChildren(Window& window) {
         if(window.name==L"_启动窗口"&&(window.children.back().name==L"按钮EX2"||window.children.back().name==L"按钮EX13"))
             EnableWindow(child,FALSE);
     }
+    // XML order is serialization order; native Tab traversal follows sibling order.
+    // Keep the full-screen picture/button stack intact, and order forms visually.
+    if(window.name!=L"大图窗口") {
+        for(const auto& parent:parentHandles) {
+            std::vector<HWND> siblings;
+            for(const auto& child:window.children)
+                if(GetParent(child.hwnd)==parent.second)siblings.push_back(child.hwnd);
+            std::stable_sort(siblings.begin(),siblings.end(),[](HWND a,HWND b) {
+                RECT ra{},rb{};GetWindowRect(a,&ra);GetWindowRect(b,&rb);
+                return ra.top==rb.top?ra.left<rb.left:ra.top<rb.top;
+            });
+            for(HWND child:siblings)SetWindowPos(child,HWND_BOTTOM,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        }
+    }
     return success;
+}
+bool ReplicaUi::PreTranslateMessage(MSG& message) {
+    const HWND root=GetAncestor(message.hwnd,GA_ROOT);
+    if(!WindowFor(root)||!IsWindowEnabled(root))return false;
+    if(message.message==WM_KEYDOWN&&message.wParam==VK_ESCAPE) {
+        const HWND focus=GetFocus();wchar_t cls[32]{};
+        if(focus)GetClassNameW(focus,cls,_countof(cls));
+        // Escape first dismisses an open combo, then closes the product window.
+        if(_wcsicmp(cls,L"ComboBox")==0&&SendMessageW(focus,CB_GETDROPPEDSTATE,0,0))return false;
+        SendMessageW(root,WM_CLOSE,0,0);return true;
+    }
+    return IsDialogMessageW(root,&message)!=FALSE;
 }
 void ReplicaUi::ActivatePage(Window& window,HWND tab,int page) {
     for(const auto& child:window.children)

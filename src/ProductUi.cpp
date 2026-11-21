@@ -3,6 +3,7 @@
 
 #include "ProductUi.hpp"
 #include "Assets.hpp"
+#include "ThemeName.hpp"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -998,7 +999,11 @@ struct ProductUi::State {
             theme.autoColor=theme.kind==SWP_THEME_MODERN&&checked(L"选择框EX1");
             const auto name=ui->GetText(kThemeWindow,L"编辑框EX1");
             const auto directory=ThemeDirectory().wstring();
-            if(name.empty()||directory.empty()||name.size()>=_countof(theme.name)||directory.size()>=_countof(theme.outputDir)||
+            if(!ValidThemeName(name)) {
+                MessageBoxW(owner,L"主题名称须为 1–100 个字符，不能包含文件名禁用字符、控制字符或系统保留名称，也不能以空格或句点结尾。",
+                    L"请修改主题名称",MB_OK|MB_ICONWARNING);return;
+            }
+            if(directory.empty()||name.size()>=_countof(theme.name)||directory.size()>=_countof(theme.outputDir)||
                 (options.testMode&&!IsWithin(options.dataRoot,directory))) {
                 MessageBoxW(owner,L"请检查主题名称和保存位置。",L"导出主题包",MB_OK|MB_ICONWARNING);return;
             }
@@ -1314,10 +1319,7 @@ struct ProductUi::State {
         MSG message{};
         int result = 0;
         while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0) {
-            if(message.message==WM_KEYDOWN&&message.wParam==VK_ESCAPE){
-                const HWND root=GetAncestor(message.hwnd,GA_ROOT);
-                SendMessageW(root,WM_CLOSE,0,0);continue;
-            }
+            if(ui->PreTranslateMessage(message))continue;
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }

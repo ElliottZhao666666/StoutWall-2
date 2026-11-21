@@ -30,6 +30,7 @@ public:
     explicit ReplicaUi(HINSTANCE instance, EventHandler handler, HICON icon, const v6::AssetModule& assets);
     ~ReplicaUi();
     bool CreateMain();
+    bool PreTranslateMessage(MSG& message);
     void SetMessageHandler(MessageHandler handler) { messageHandler_ = std::move(handler); }
     void SetCloseGuard(CloseGuard guard) { closeGuard_ = std::move(guard); }
     void Quit();
@@ -75,6 +76,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
     Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> imageTarget_;
     int dpi_=96;
+    HFONT font_=nullptr;
     HICON icon_ = nullptr;
     bool ownsClass_ = false;
     EventHandler handler_;

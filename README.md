@@ -23,3 +23,5 @@
 无参数启动使用 `%LOCALAPPDATA%\StoutWallReBuild2` 下的专用配置和图库，并按设置更新桌面。开机自启只保留界面偏好。验收必须使用 `--test-mode` 或 `--ui-test`，该模式不会应用桌面壁纸，配置可用 `--data-root` 和 `--config` 指向独立测试目录。本机实测和 Win7 SP1 待测项见 [验收记录](docs/ACCEPTANCE.md)。
 
 网络超时、取消、证书拒绝、三源下载及挂起请求下退出的复测入口和接续待办见 [网络验收与接续记录](docs/NETWORK_ACCEPTANCE.md)。
+
+2026-11-21 进一步完成本机 Computer Use 实测和真实五分钟图库轮播，修复 UHD 收藏主题导出、Unicode 主题名称、参数遮挡和键盘导航。最终双启动 GUI、主题专项、后端及在途退出回归均通过，详细范围与日志见 [本机验收与修复记录](docs/LOCAL_ACCEPTANCE.md)。Win7 实机验收按用户要求留后续。

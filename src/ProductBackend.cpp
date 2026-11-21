@@ -1019,9 +1019,21 @@ struct ProductBackend::Impl {
                 Put(paths[i].path, output.wstring(), L"theme image path");
             }
             SWP_Options options = PlatformOptions(); DWORD toolExit = 0; wchar_t output[SWP_PATH_CAP]{};
-            CheckPlatform(SWP_ExportTheme(&theme, paths.data(), static_cast<DWORD>(paths.size()),
-                &options, output, _countof(output), &toolExit), L"Exporting theme package");
-            message = L"Theme package exported: " + Get(output); break;
+            const DWORD error=SWP_ExportTheme(&theme, paths.data(), static_cast<DWORD>(paths.size()),
+                &options, output, _countof(output), &toolExit);
+            if(error!=ERROR_SUCCESS) {
+                const wchar_t* reason=error==ERROR_ALREADY_EXISTS?L"同名主题包已存在，请修改主题名称后重试。":
+                    error==ERROR_BAD_FORMAT?L"图库图片格式或尺寸不符合导出要求，请更换尺寸后重试。":
+                    error==ERROR_PATH_NOT_FOUND||error==ERROR_FILE_NOT_FOUND?L"导出目录或主题打包工具不存在，请检查保存位置和程序文件。":
+                    error==ERROR_ACCESS_DENIED?L"无法写入导出目录，请选择可写入的位置后重试。":
+                    error==ERROR_CANCELLED?L"主题包导出已取消。":
+                    error==ERROR_TIMEOUT?L"主题打包超时，请重试。":
+                    error==ERROR_INSTALL_FAILURE?L"主题打包工具执行失败，请检查程序文件后重试。":
+                    L"主题包导出失败，请检查名称、图片和保存位置后重试。";
+                Fail(std::wstring(reason)+L" (Win32 error "+std::to_wstring(error)+
+                    (toolExit?L", tool exit "+std::to_wstring(toolExit):L"")+L")");
+            }
+            message = L"主题包已导出：" + Get(output); break;
         }
         case ProductAction::Source:
             if (request.value < SWN_GLOBAL || request.value > SWN_CUSTOM) Fail(L"Source must be 1, 2, or 3");
