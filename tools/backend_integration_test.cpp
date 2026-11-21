@@ -1,18 +1,24 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include "ProductBackend.hpp"
 #include "SequenceRandom.hpp"
+#include "TaskRunner.hpp"
 
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -315,9 +321,291 @@ void CheckLegacyRandomSequence() {
     std::wcout << L"PASS: original random sampling allows non-adjacent repeats and rejects adjacent repeats.\n";
 }
 
+class LocalProxyProbe {
+public:
+    enum class Behavior { StallConnect, Reject, StallTls };
+
+    explicit LocalProxyProbe(Behavior behavior = Behavior::StallConnect) : behavior_(behavior) {
+        Require(WSAStartup(MAKEWORD(2, 2), &winsock_) == 0, "WSAStartup failed");
+        try {
+        listener_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        Require(listener_ != INVALID_SOCKET, "local proxy socket creation failed");
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        Require(bind(listener_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0,
+                "local proxy bind failed");
+        Require(listen(listener_, 1) == 0, "local proxy listen failed");
+        int addressSize = sizeof(address);
+        Require(getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &addressSize) == 0,
+                "local proxy port query failed");
+        port_ = ntohs(address.sin_port);
+        accepted_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        stop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        Require(accepted_ && stop_, "local proxy event creation failed");
+        worker_ = std::thread([this] { Serve(); });
+        } catch (...) {
+            Cleanup();
+            throw;
+        }
+    }
+
+    ~LocalProxyProbe() { Cleanup(); }
+
+    LocalProxyProbe(const LocalProxyProbe&) = delete;
+    LocalProxyProbe& operator=(const LocalProxyProbe&) = delete;
+
+    unsigned short Port() const { return port_; }
+    bool WaitAccepted(DWORD timeout) const { return WaitForSingleObject(accepted_, timeout) == WAIT_OBJECT_0; }
+
+private:
+    void Cleanup() {
+        if (stop_) SetEvent(stop_);
+        if (worker_.joinable()) worker_.join();
+        if (listener_ != INVALID_SOCKET) {
+            closesocket(listener_);
+            listener_ = INVALID_SOCKET;
+        }
+        if (accepted_) CloseHandle(accepted_);
+        if (stop_) CloseHandle(stop_);
+        WSACleanup();
+    }
+
+    void Serve() {
+        // Poll the local listener so a pre-cancelled request needs no dummy
+        // connection and cleanup never races a close against accept().
+        for (;;) {
+            if (WaitForSingleObject(stop_, 0) == WAIT_OBJECT_0) return;
+            fd_set ready;
+            FD_ZERO(&ready);
+            FD_SET(listener_, &ready);
+            timeval timeout{0, 100000};
+            const int result = select(0, &ready, nullptr, nullptr, &timeout);
+            if (result == SOCKET_ERROR) return;
+            if (result > 0) break;
+        }
+        SOCKET client = accept(listener_, nullptr, nullptr);
+        if (client == INVALID_SOCKET) return;
+        DWORD receiveTimeout = 2000;
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO,
+                   reinterpret_cast<const char*>(&receiveTimeout), sizeof(receiveTimeout));
+        std::string headers;
+        char block[1024];
+        while (headers.find("\r\n\r\n") == std::string::npos && headers.size() < 16384) {
+            const int received = recv(client, block, sizeof(block), 0);
+            if (received <= 0) { closesocket(client); return; }
+            headers.append(block, static_cast<size_t>(received));
+        }
+        if (behavior_ == Behavior::Reject) {
+            static constexpr char response[] =
+                "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(client, response, static_cast<int>(sizeof(response) - 1), 0);
+            SetEvent(accepted_);
+        } else {
+            if (behavior_ == Behavior::StallTls) {
+                static constexpr char tunnel[] = "HTTP/1.1 200 Connection Established\r\n\r\n";
+                send(client, tunnel, static_cast<int>(sizeof(tunnel) - 1), 0);
+                const int received = recv(client, block, sizeof(block), 0);
+                if (received <= 0 || static_cast<unsigned char>(block[0]) != 0x16) {
+                    closesocket(client);
+                    return;
+                }
+            }
+            SetEvent(accepted_);
+            WaitForSingleObject(stop_, INFINITE);
+        }
+        shutdown(client, SD_BOTH);
+        closesocket(client);
+    }
+
+    WSADATA winsock_{};
+    SOCKET listener_ = INVALID_SOCKET;
+    HANDLE accepted_ = nullptr;
+    HANDLE stop_ = nullptr;
+    unsigned short port_ = 0;
+    Behavior behavior_;
+    std::thread worker_;
+};
+
+SWN_Options ProxyOptions(const LocalProxyProbe& proxy, DWORD timeoutMs, HANDLE cancel = nullptr) {
+    SWN_Options options{};
+    options.cbSize = sizeof(options);
+    options.timeoutMs = timeoutMs;
+    options.cancelEvent = cancel;
+    swprintf_s(options.proxy, L"127.0.0.1:%u", proxy.Port());
+    return options;
+}
+
+DWORD FetchThroughProxy(const SWN_Options& options, DWORD* status = nullptr) {
+    SWN_Metadata metadata{};
+    metadata.cbSize = sizeof(metadata);
+    return SWN_FetchLatest(SWN_CN, &options, &metadata, status);
+}
+
+void CheckNetworkFailurePaths(const fs::path& root) {
+    {
+        std::wcout << L"CHECK: stalled local proxy deadline.\n";
+        LocalProxyProbe proxy;
+        const SWN_Options options = ProxyOptions(proxy, 1200);
+        const auto start = std::chrono::steady_clock::now();
+        const DWORD result = FetchThroughProxy(options);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        std::wcout << L"  Deadline elapsed: " << elapsed << L" ms; status " << result << L".\n";
+        Require(proxy.WaitAccepted(0), "timeout probe did not reach its local proxy");
+        Require(result == ERROR_TIMEOUT,
+                "stalled proxy returned an unexpected timeout status: " + std::to_string(result));
+        Require(elapsed >= 1000 && elapsed < 3500, "network total timeout missed its local bound: " +
+                    std::to_string(elapsed) + " ms, result " + std::to_string(result));
+    }
+    {
+        std::wcout << L"CHECK: local proxy rejection.\n";
+        LocalProxyProbe proxy(LocalProxyProbe::Behavior::Reject);
+        const SWN_Options options = ProxyOptions(proxy, 5000);
+        DWORD status = 0;
+        const DWORD result = FetchThroughProxy(options, &status);
+        Require(proxy.WaitAccepted(0), "proxy rejection probe did not reach its local proxy");
+        Require(result != ERROR_SUCCESS && status != 200,
+                "proxy rejection was incorrectly accepted as a successful HTTP response");
+    }
+    {
+        std::wcout << L"CHECK: cancellation with 15 second request budget.\n";
+        LocalProxyProbe proxy;
+        HANDLE cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        Require(cancel != nullptr, "network cancellation event creation failed");
+        const SWN_Options options = ProxyOptions(proxy, 15000, cancel);
+        std::atomic<DWORD> result{ERROR_GEN_FAILURE};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread request([&] { result.store(FetchThroughProxy(options), std::memory_order_release); });
+        const bool reachedProxy = proxy.WaitAccepted(3000);
+        SetEvent(cancel);
+        request.join();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        CloseHandle(cancel);
+        std::wcout << L"  Cancellation elapsed: " << elapsed << L" ms; status " << result.load() << L".\n";
+        Require(reachedProxy, "cancellable request did not reach its local proxy");
+        Require(result.load(std::memory_order_acquire) == ERROR_CANCELLED,
+                "cancelled request returned status " + std::to_string(result.load()));
+        Require(elapsed < 3500, "in-flight cancellation did not return within its bounded wait");
+    }
+    {
+        std::wcout << L"CHECK: deadline while TLS negotiation is stalled.\n";
+        LocalProxyProbe proxy(LocalProxyProbe::Behavior::StallTls);
+        const SWN_Options options = ProxyOptions(proxy, 900);
+        const auto start = std::chrono::steady_clock::now();
+        const DWORD result = FetchThroughProxy(options);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        Require(proxy.WaitAccepted(0) && result == ERROR_TIMEOUT && elapsed < 3000,
+                "TLS negotiation did not respect the total deadline");
+    }
+    const fs::path downloadRoot = root / L"network-failures";
+    fs::create_directory(downloadRoot);
+    const fs::path existing = downloadRoot / L"preserved.jpg";
+    {
+        std::ofstream output(existing, std::ios::binary);
+        output << "existing destination must survive a failed or cancelled download";
+        Require(static_cast<bool>(output), "download preservation fixture could not be written");
+    }
+    const auto original = Read(existing);
+    SWN_Metadata metadata{};
+    metadata.cbSize = sizeof(metadata);
+    wcscpy_s(metadata.urlbase, L"/th?id=OHR.IsolatedFailureProbe");
+    {
+        LocalProxyProbe proxy;
+        HANDLE cancel = CreateEventW(nullptr, TRUE, TRUE, nullptr);
+        Require(cancel != nullptr, "pre-cancel event creation failed");
+        const SWN_Options options = ProxyOptions(proxy, 15000, cancel);
+        const DWORD fetch = FetchThroughProxy(options);
+        const DWORD download = SWN_DownloadImage(&metadata, 2, existing.c_str(), &options, nullptr, nullptr);
+        CloseHandle(cancel);
+        Require(fetch == ERROR_CANCELLED && download == ERROR_CANCELLED && !proxy.WaitAccepted(0),
+                "pre-cancelled metadata/download request reached the proxy or returned the wrong error");
+    }
+    {
+        LocalProxyProbe proxy(LocalProxyProbe::Behavior::Reject);
+        const SWN_Options options = ProxyOptions(proxy, 3000);
+        Require(SWN_DownloadImage(&metadata, 2, existing.c_str(), &options, nullptr, nullptr) != ERROR_SUCCESS,
+                "rejected download unexpectedly succeeded");
+    }
+    {
+        LocalProxyProbe proxy;
+        const SWN_Options options = ProxyOptions(proxy, 600);
+        Require(SWN_DownloadImage(&metadata, 2, existing.c_str(), &options, nullptr, nullptr) == ERROR_TIMEOUT,
+                "download did not report the total deadline");
+    }
+    // Exercise callback lifetime repeatedly, including cancellation during TLS.
+    for (int i = 0; i < 8; ++i) {
+        LocalProxyProbe proxy(i % 2 ? LocalProxyProbe::Behavior::StallTls :
+                                      LocalProxyProbe::Behavior::StallConnect);
+        HANDLE cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        Require(cancel != nullptr, "download cancellation event creation failed");
+        const SWN_Options options = ProxyOptions(proxy, 15000, cancel);
+        DWORD result = ERROR_GEN_FAILURE;
+        std::thread request([&] {
+            result = SWN_DownloadImage(&metadata, 2, existing.c_str(), &options, nullptr, nullptr);
+        });
+        const bool reachedProxy = proxy.WaitAccepted(3000);
+        const auto start = std::chrono::steady_clock::now();
+        SetEvent(cancel);
+        request.join();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        CloseHandle(cancel);
+        Require(reachedProxy && result == ERROR_CANCELLED && elapsed < 1500,
+                "repeated download cancellation failed to release the pending request promptly");
+        Require(Read(existing) == original, "failed download modified the existing destination");
+    }
+    Require(std::distance(fs::directory_iterator(downloadRoot), fs::directory_iterator{}) == 1,
+            "failed download left a temporary file");
+    {
+        LocalProxyProbe proxy;
+        const HWND window = CreateWindowExW(0, L"STATIC", L"StoutWall isolated task cancellation",
+                                            0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                            GetModuleHandleW(nullptr), nullptr);
+        Require(window != nullptr, "task cancellation message-only window creation failed");
+        DWORD result = ERROR_GEN_FAILURE;
+        bool reachedProxy = false;
+        long long elapsed = 0;
+        try {
+            stoutwall::TaskRunner runner;
+            Require(runner.Start(window), "task cancellation worker could not start");
+            const SWN_Options options = ProxyOptions(proxy, 15000, runner.CancellationEvent());
+            Require(runner.Submit(1, [&] {
+                result = FetchThroughProxy(options);
+                stoutwall::TaskResult completed;
+                completed.code = static_cast<int32_t>(result);
+                return completed;
+            }) != 0, "task cancellation request was not submitted");
+            reachedProxy = proxy.WaitAccepted(3000);
+            const auto start = std::chrono::steady_clock::now();
+            runner.Stop();
+            elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            MSG pending{};
+            Require(!PeekMessageW(&pending, window, stoutwall::WM_STOUTWALL_TASK_DONE,
+                                  stoutwall::WM_STOUTWALL_TASK_DONE, PM_NOREMOVE),
+                    "stopped worker left a task-result message or payload behind");
+        } catch (...) {
+            DestroyWindow(window);
+            throw;
+        }
+        DestroyWindow(window);
+        Require(reachedProxy && result == ERROR_CANCELLED && elapsed < 1500,
+                "TaskRunner::Stop did not cancel and join its active network request promptly");
+        std::wcout << L"PASS: worker stop cancelled the request, joined, and drained its result ("
+                   << elapsed << L" ms).\n";
+    }
+    std::wcout << L"PASS: proxy rejection, CONNECT/TLS deadlines, metadata/download cancellation, "
+                  L"destination preservation, and repeated callback cleanup.\n";
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    std::wcout << std::unitbuf;
     try {
         CheckMetadataDates();
         CheckLegacyRandomSequence();
@@ -328,6 +616,7 @@ int wmain(int argc, wchar_t** argv) {
                 "usage: backend-integration-test --runtime DIR --fixture DIR --root DIR");
         Require(!fs::exists(root), "test root already exists: " + root.string());
         fs::create_directories(root);
+        CheckNetworkFailurePaths(root);
         CopyFixture(fixture, root / L"Gallery");
 
         const fs::path config = root / L"StoutWall.cfg";

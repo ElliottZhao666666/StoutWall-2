@@ -18,6 +18,10 @@ test data root and are never installed. Source selection is saved through the
 isolated UI-test path without a network request. iOS copy/open actions are
 recorded under the isolated data root instead of touching the clipboard or browser.
 
+Use -FocusedNetworkShutdown to refresh through a private stalled loopback proxy,
+then verify that confirmed exit cancels the pending request within four seconds.
+It uses the same test mode, isolated gallery, and disabled desktop application.
+
 The tray test sends the shell's restore notification to the same hidden instance.
 Check the physical tray icon and large-image rendering separately. Do not operate
 startup controls or apply a desktop wallpaper.
@@ -27,7 +31,8 @@ param(
     [Parameter(Mandatory)] [string] $GalleryFixture,
     [string] $TempParent = [IO.Path]::GetTempPath(),
     [ValidateRange(5, 120)] [int] $TimeoutSeconds = 25,
-    [switch] $FocusedClearFavorites
+    [switch] $FocusedClearFavorites,
+    [switch] $FocusedNetworkShutdown
 )
 
 Set-StrictMode -Version Latest
@@ -113,7 +118,7 @@ namespace StoutWallVerification {
 
         static Exception Failed(string step) { return new Win32Exception(Marshal.GetLastWin32Error(), step); }
 
-        public Session(string exe, string directory, string dataRoot, string config) {
+        public Session(string exe, string directory, string dataRoot, string config, string proxy) {
             job = CreateJobObjectW(IntPtr.Zero, IntPtr.Zero);
             if (job == IntPtr.Zero) throw Failed("CreateJobObjectW");
             ProcessInfo info = new ProcessInfo();
@@ -126,6 +131,11 @@ namespace StoutWallVerification {
                 StartupInfo startup = new StartupInfo();
                 startup.Size = Marshal.SizeOf(startup);
                 var args = new StringBuilder("\"" + exe + "\" --test-mode --ui-test --data-root \"" + dataRoot + "\" --config \"" + config + "\"");
+                if (!String.IsNullOrEmpty(proxy)) {
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(proxy, @"^127\.0\.0\.1:[0-9]+$"))
+                        throw new InvalidOperationException("Only the loopback test proxy is allowed");
+                    args.Append(" --proxy " + proxy);
+                }
                 // Assign the job before running even the first user-mode instruction.
                 if (!CreateProcessW(exe, args, IntPtr.Zero, IntPtr.Zero, false, 4, IntPtr.Zero, directory, ref startup, out info))
                     throw Failed("CreateProcessW (suspended)");
@@ -971,6 +981,8 @@ function Assert-Win32Build([string] $Path) {
 
 $tabs = @('当前壁纸', '运行模式', '设置', '壁纸库', '更多内容')
 $dataRoot = $null
+$networkListener = $null
+$networkClient = $null
 $status = 1
 try {
     Assert-That ($IsWindows -and [Environment]::UserInteractive -and
@@ -1025,14 +1037,21 @@ try {
     $expected = $null
     $testedDate = $null
 
-    $runCount = if ($FocusedClearFavorites) { 1 } else { 2 }
+    $proxy = ''
+    if ($FocusedNetworkShutdown) {
+        Assert-That (!$FocusedClearFavorites) 'Select only one focused regression.'
+        $networkListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $networkListener.Start()
+        $proxy = '127.0.0.1:' + $networkListener.LocalEndpoint.Port
+    }
+    $runCount = if ($FocusedClearFavorites -or $FocusedNetworkShutdown) { 1 } else { 2 }
     for ($run = 1; $run -le $runCount; $run++) {
         $session = $null
         $main = $null
         $markers = @()
         $exitAttempted = $false
         try {
-            $session = [StoutWallVerification.Session]::new($product.FullName, $product.DirectoryName, $dataRoot, $config)
+            $session = [StoutWallVerification.Session]::new($product.FullName, $product.DirectoryName, $dataRoot, $config, $proxy)
             Write-Host "Run ${run}: PID $($session.Id)."
             $main = Wait-For 'main window' {
                 $found = @(Get-TestWindow '胖哥每日壁纸')
@@ -1049,6 +1068,24 @@ try {
             Assert-That (Test-Page 0) 'Initial page is not 当前壁纸 or its visibility is incorrect.'
             Write-Host "PASS: Initial tab, titles and order (run $run)."
             Wait-ForGalleryLoad
+
+            if ($FocusedNetworkShutdown) {
+                Select-Page 2
+                $accept = $networkListener.AcceptTcpClientAsync()
+                $refresh = Find-Control $main Button '刷新今日壁纸' -Visible
+                Assert-That ($refresh -and $session.Enabled($refresh)) 'Refresh button is unavailable.'
+                # This focused case alone sends a real request, pinned to the
+                # local stalled proxy; startup and desktop application stay in test mode.
+                $session.Click($refresh, '刷新今日壁纸')
+                Assert-That ($accept.Wait(3000)) 'Refresh did not reach the stalled loopback proxy.'
+                $networkClient = $accept.GetAwaiter().GetResult()
+                $clock = [Diagnostics.Stopwatch]::StartNew()
+                $exitAttempted = $true
+                Quit-Product
+                Assert-That ($clock.ElapsedMilliseconds -lt 4000) 'Confirmed exit waited for the request timeout.'
+                Write-Host "PASS: Confirmed GUI exit cancelled a stalled request ($($clock.ElapsedMilliseconds) ms)."
+                continue
+            }
 
             if ($run -eq 1 -and !$FocusedClearFavorites) {
                 Test-SevenDayUnavailable
@@ -1139,11 +1176,13 @@ try {
             }
         }
     }
-    Write-Host 'PASS: Gallery favorite persisted after confirmed exit and relaunch.'
+    if (!$FocusedNetworkShutdown) { Write-Host 'PASS: Gallery favorite persisted after confirmed exit and relaunch.' }
     $status = 0
 } catch {
     [Console]::Error.WriteLine("FAIL: $_")
 } finally {
+    if ($networkClient) { $networkClient.Dispose() }
+    if ($networkListener) { $networkListener.Stop() }
     if ($dataRoot) { Write-Host "Retained test data: $dataRoot" }
 }
 exit $status

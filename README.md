@@ -21,3 +21,5 @@
 运行 `cmd /c build.cmd`，产物位于 `build/win32`。构建使用现有 MSVC x86 工具链、同级旧工程的两个 EDT 包和 cabarc.exe；首次构建会下载 7-Zip 25.01 的固定源码修订，静态编译独立的 7za.exe，并随产物保存许可文件。主程序和 C++ DLL 使用 /MT，assets.dll 只含资源。
 
 无参数启动使用 `%LOCALAPPDATA%\StoutWallReBuild2` 下的专用配置和图库，并按设置更新桌面。开机自启只保留界面偏好。验收必须使用 `--test-mode` 或 `--ui-test`，该模式不会应用桌面壁纸，配置可用 `--data-root` 和 `--config` 指向独立测试目录。本机实测和 Win7 SP1 待测项见 [验收记录](docs/ACCEPTANCE.md)。
+
+网络超时、取消、证书拒绝、三源下载及挂起请求下退出的复测入口和接续待办见 [网络验收与接续记录](docs/NETWORK_ACCEPTANCE.md)。

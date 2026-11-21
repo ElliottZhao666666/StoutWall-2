@@ -1112,6 +1112,9 @@ struct ProductUi::State {
         closing = true;
         RemoveTray();
         KillTimer(ui->MainWindow(), kClockTimer);
+        // Interrupt the active request before queuing shutdown. Keep the
+        // worker alive so gallery teardown still runs on its owning thread.
+        if (HANDLE cancel = runner.CancellationEvent()) SetEvent(cancel);
         shutdownQueued = true;
         const auto request = Request(ProductAction::Shutdown);
         if (!runner.Submit(kShutdownOperation, [this, request]() {

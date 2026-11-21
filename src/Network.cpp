@@ -2,6 +2,7 @@
 #include "NetworkApi.h"
 #include <winhttp.h>
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
 #include <map>
 #include <string>
@@ -22,34 +23,132 @@ namespace {
 DWORD LastError() { DWORD e=GetLastError(); return e?e:ERROR_GEN_FAILURE; }
 bool IsCancelled(HANDLE e) { return e && WaitForSingleObject(e,0)==WAIT_OBJECT_0; }
 DWORD Timeout(const SWN_Options* o) { return !o||!o->timeoutMs?45000:std::min<DWORD>(o->timeoutMs,600000); }
-struct Handles { HINTERNET s=nullptr,c=nullptr,r=nullptr; ~Handles(){if(r)WinHttpCloseHandle(r);if(c)WinHttpCloseHandle(c);if(s)WinHttpCloseHandle(s);} };
+DWORD StopError(HANDLE cancel,ULONGLONG start,DWORD total) {
+    if(IsCancelled(cancel))return ERROR_CANCELLED;
+    return GetTickCount64()-start>=total?ERROR_TIMEOUT:ERROR_SUCCESS;
+}
+DWORD NormalizeError(DWORD error,HANDLE cancel,ULONGLONG start,DWORD total) {
+    const DWORD stopped=StopError(cancel,start,total);
+    if(stopped)return stopped;
+    return error==ERROR_WINHTTP_TIMEOUT?ERROR_TIMEOUT:error;
+}
+struct AsyncContext {
+    HANDLE completed=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+    HANDLE closed=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    std::atomic<DWORD> status{0},error{ERROR_SUCCESS},available{0},readBytes{0};
+    std::vector<unsigned char> readBuffer;
+    ~AsyncContext(){if(completed)CloseHandle(completed);if(closed)CloseHandle(closed);}
+    bool Ready()const{return completed&&closed;}
+};
+void CALLBACK StatusCallback(HINTERNET,DWORD_PTR value,DWORD status,LPVOID info,DWORD length) {
+    auto* context=reinterpret_cast<AsyncContext*>(value);if(!context)return;
+    switch(status) {
+    case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
+    case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+        context->status.store(status,std::memory_order_relaxed);SetEvent(context->completed);break;
+    case WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE:
+        if(info&&length>=sizeof(DWORD))context->available.store(*static_cast<DWORD*>(info),std::memory_order_relaxed);
+        context->status.store(status,std::memory_order_relaxed);SetEvent(context->completed);break;
+    case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
+        context->readBytes.store(length,std::memory_order_relaxed);context->status.store(status,std::memory_order_relaxed);
+        SetEvent(context->completed);break;
+    case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
+        if(info&&length>=sizeof(WINHTTP_ASYNC_RESULT))
+            context->error.store(static_cast<WINHTTP_ASYNC_RESULT*>(info)->dwError,std::memory_order_relaxed);
+        else context->error.store(ERROR_GEN_FAILURE,std::memory_order_relaxed);
+        context->status.store(status,std::memory_order_relaxed);SetEvent(context->completed);break;
+    case WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
+        SetEvent(context->closed);break;
+    default:break;
+    }
+}
+void BeginOperation(AsyncContext& context) {
+    ResetEvent(context.completed);context.error.store(ERROR_SUCCESS,std::memory_order_relaxed);
+    context.available.store(0,std::memory_order_relaxed);context.readBytes.store(0,std::memory_order_relaxed);
+    context.status.store(0,std::memory_order_relaxed);
+}
+DWORD AwaitOperation(AsyncContext& context,BOOL started,DWORD expected,HANDLE cancel,ULONGLONG start,DWORD total) {
+    if(!started) { DWORD error=GetLastError();if(error!=ERROR_IO_PENDING)return NormalizeError(error,cancel,start,total); }
+    HANDLE waits[2]={context.completed,cancel};const DWORD count=cancel?2:1;
+    for(;;) {
+        DWORD stopped=StopError(cancel,start,total);if(stopped)return stopped;
+        const ULONGLONG elapsed=GetTickCount64()-start;
+        if(elapsed>=total)return ERROR_TIMEOUT;
+        const DWORD remaining=static_cast<DWORD>(std::min<ULONGLONG>(total-elapsed,INFINITE-1));
+        const DWORD result=WaitForMultipleObjects(count,waits,FALSE,remaining);
+        if(result==WAIT_OBJECT_0) {
+            stopped=StopError(cancel,start,total);if(stopped)return stopped;
+            const DWORD completed=context.status.load(std::memory_order_relaxed);
+            if(completed==WINHTTP_CALLBACK_STATUS_REQUEST_ERROR)
+                return NormalizeError(context.error.load(std::memory_order_relaxed),cancel,start,total);
+            return completed==expected?ERROR_SUCCESS:ERROR_INVALID_DATA;
+        }
+        if(cancel&&result==WAIT_OBJECT_0+1)return ERROR_CANCELLED;
+        if(result==WAIT_TIMEOUT)return ERROR_TIMEOUT;
+        if(result==WAIT_FAILED)return NormalizeError(LastError(),cancel,start,total);
+    }
+}
+struct Handles {
+    HINTERNET s=nullptr,c=nullptr,r=nullptr;AsyncContext* context=nullptr;
+    explicit Handles(AsyncContext* value):context(value){}
+    void CloseRequest(){
+        if(!r)return;
+        HINTERNET request=r;r=nullptr;
+        // Closing cancels pending I/O. The final callback owns the last access
+        // to context and readBuffer, so keep both alive until HANDLE_CLOSING.
+        if(WinHttpCloseHandle(request)&&context)WaitForSingleObject(context->closed,INFINITE);
+    }
+    ~Handles(){CloseRequest();if(c)WinHttpCloseHandle(c);if(s)WinHttpCloseHandle(s);}
+};
 struct Reply { std::vector<unsigned char> bytes; DWORD status=0; };
 
 DWORD Get(const std::wstring& url,const SWN_Options* o,Reply& reply) {
     HANDLE cancel=o?o->cancelEvent:nullptr;if(IsCancelled(cancel))return ERROR_CANCELLED;
-    const ULONGLONG start=GetTickCount64();const DWORD total=Timeout(o);
+    const ULONGLONG start=GetTickCount64();const DWORD total=Timeout(o);AsyncContext context;if(!context.Ready())return LastError();
     URL_COMPONENTS u{};u.dwStructSize=sizeof(u);wchar_t host[512]{},path[4096]{},extra[2048]{};
     u.lpszHostName=host;u.dwHostNameLength=_countof(host);u.lpszUrlPath=path;u.dwUrlPathLength=_countof(path);u.lpszExtraInfo=extra;u.dwExtraInfoLength=_countof(extra);
     if(!WinHttpCrackUrl(url.c_str(),static_cast<DWORD>(url.size()),0,&u))return LastError();
     if(u.nScheme!=INTERNET_SCHEME_HTTPS||!u.dwHostNameLength)return ERROR_INVALID_NAME;
     std::wstring resource(path,u.dwUrlPathLength);resource.append(extra,u.dwExtraInfoLength);if(resource.empty())resource=L"/";
-    Handles h;std::wstring proxy=o?o->proxy:L"";
+    Handles h(nullptr);std::wstring proxy=o?o->proxy:L"";
     h.s=WinHttpOpen(L"StoutWall/2.0",proxy.empty()?WINHTTP_ACCESS_TYPE_DEFAULT_PROXY:WINHTTP_ACCESS_TYPE_NAMED_PROXY,
-        proxy.empty()?WINHTTP_NO_PROXY_NAME:proxy.c_str(),WINHTTP_NO_PROXY_BYPASS,0);if(!h.s)return LastError();
-    int timeout=static_cast<int>(std::min<DWORD>(total,5000));WinHttpSetTimeouts(h.s,timeout,timeout,timeout,timeout);
-    DWORD tls=WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;if(!WinHttpSetOption(h.s,WINHTTP_OPTION_SECURE_PROTOCOLS,&tls,sizeof(tls)))return LastError();
-    std::wstring hostname(host,u.dwHostNameLength);h.c=WinHttpConnect(h.s,hostname.c_str(),u.nPort,0);if(!h.c)return LastError();
-    h.r=WinHttpOpenRequest(h.c,L"GET",resource.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!h.r)return LastError();
+        proxy.empty()?WINHTTP_NO_PROXY_NAME:proxy.c_str(),WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);if(!h.s)return LastError();
+    const int timeout=static_cast<int>(std::min<DWORD>(total,5000));
+    if(!WinHttpSetTimeouts(h.s,timeout,timeout,timeout,timeout))return NormalizeError(LastError(),cancel,start,total);
+    DWORD callbackFlags=WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS|WINHTTP_CALLBACK_FLAG_REQUEST_ERROR|WINHTTP_CALLBACK_FLAG_HANDLES;
+    if(WinHttpSetStatusCallback(h.s,StatusCallback,callbackFlags,0)==WINHTTP_INVALID_STATUS_CALLBACK)return LastError();
+    DWORD tls=WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;if(!WinHttpSetOption(h.s,WINHTTP_OPTION_SECURE_PROTOCOLS,&tls,sizeof(tls)))return NormalizeError(LastError(),cancel,start,total);
+    DWORD e=StopError(cancel,start,total);if(e)return e;
+    std::wstring hostname(host,u.dwHostNameLength);h.c=WinHttpConnect(h.s,hostname.c_str(),u.nPort,0);if(!h.c)return NormalizeError(LastError(),cancel,start,total);
+    e=StopError(cancel,start,total);if(e)return e;
+    h.r=WinHttpOpenRequest(h.c,L"GET",resource.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE);if(!h.r)return NormalizeError(LastError(),cancel,start,total);
+    DWORD_PTR contextValue=reinterpret_cast<DWORD_PTR>(&context);
+    if(!WinHttpSetOption(h.r,WINHTTP_OPTION_CONTEXT_VALUE,&contextValue,sizeof(contextValue)))return LastError();
+    h.context=&context;
+    e=StopError(cancel,start,total);if(e)return e;
     const wchar_t hdr[]=L"Accept: application/json, image/jpeg, */*\r\n";
-    if(!WinHttpSendRequest(h.r,hdr,static_cast<DWORD>(-1L),WINHTTP_NO_REQUEST_DATA,0,0,0))return LastError();
-    if(IsCancelled(cancel))return ERROR_CANCELLED;if(GetTickCount64()-start>=total)return ERROR_TIMEOUT;
-    if(!WinHttpReceiveResponse(h.r,nullptr))return LastError();DWORD n=sizeof(reply.status);
-    if(!WinHttpQueryHeaders(h.r,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&reply.status,&n,WINHTTP_NO_HEADER_INDEX))return LastError();
+    BeginOperation(context);BOOL started=WinHttpSendRequest(h.r,hdr,static_cast<DWORD>(-1L),WINHTTP_NO_REQUEST_DATA,0,0,contextValue);
+    e=AwaitOperation(context,started,WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE,cancel,start,total);if(e)return e;
+    BeginOperation(context);started=WinHttpReceiveResponse(h.r,nullptr);
+    e=AwaitOperation(context,started,WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE,cancel,start,total);if(e)return e;
+    DWORD n=sizeof(reply.status);
+    if(!WinHttpQueryHeaders(h.r,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&reply.status,&n,WINHTTP_NO_HEADER_INDEX))return NormalizeError(LastError(),cancel,start,total);
+    e=StopError(cancel,start,total);if(e)return e;
     if(reply.status<200||reply.status>=300)return ERROR_WINHTTP_INVALID_SERVER_RESPONSE;
-    for(;;){if(IsCancelled(cancel))return ERROR_CANCELLED;if(GetTickCount64()-start>=total)return ERROR_TIMEOUT;DWORD avail=0;
-        if(!WinHttpQueryDataAvailable(h.r,&avail))return LastError();if(!avail)break;if(avail>64u*1024u*1024u-reply.bytes.size())return ERROR_FILE_TOO_LARGE;
-        size_t old=reply.bytes.size();reply.bytes.resize(old+avail);DWORD got=0;if(!WinHttpReadData(h.r,reply.bytes.data()+old,avail,&got))return LastError();reply.bytes.resize(old+got);if(!got)break;}
-    return ERROR_SUCCESS;
+    for(;;){
+        e=StopError(cancel,start,total);if(e)return e;
+        BeginOperation(context);started=WinHttpQueryDataAvailable(h.r,nullptr);
+        e=AwaitOperation(context,started,WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE,cancel,start,total);if(e)return e;
+        const DWORD avail=context.available.load(std::memory_order_relaxed);if(!avail)break;
+        if(avail>64u*1024u*1024u-reply.bytes.size())return ERROR_FILE_TOO_LARGE;
+        context.readBuffer.resize(avail);BeginOperation(context);
+        started=WinHttpReadData(h.r,context.readBuffer.data(),avail,nullptr);
+        e=AwaitOperation(context,started,WINHTTP_CALLBACK_STATUS_READ_COMPLETE,cancel,start,total);if(e)return e;
+        const DWORD got=context.readBytes.load(std::memory_order_relaxed);
+        if(got>avail)return ERROR_INVALID_DATA;
+        reply.bytes.insert(reply.bytes.end(),context.readBuffer.begin(),context.readBuffer.begin()+got);if(!got)break;
+    }
+    return StopError(cancel,start,total);
 }
 
 bool Utf8(const void* p,DWORD n,std::wstring& out){if(!p||!n||n>4u*1024u*1024u)return false;int z=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,static_cast<LPCCH>(p),static_cast<int>(n),nullptr,0);if(!z)return false;out.resize(z);return MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,static_cast<LPCCH>(p),static_cast<int>(n),out.data(),z)==z;}

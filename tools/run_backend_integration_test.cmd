@@ -17,7 +17,9 @@ cl %COMMON% /Fo"%OBJ%\BackendIntegrationProductBackend.obj" /c "%ROOT%\src\Produ
 if errorlevel 1 exit /b 10
 cl %COMMON% /Fo"%OBJ%\BackendIntegrationTest.obj" /c "%ROOT%\tools\backend_integration_test.cpp"
 if errorlevel 1 exit /b 11
-link /nologo /MACHINE:X86 /SUBSYSTEM:CONSOLE,6.01 /Brepro /OUT:"%OUT%" "%OBJ%\BackendIntegrationProductBackend.obj" "%OBJ%\BackendIntegrationTest.obj" "%OBJ%\network.lib" "%OBJ%\platform.lib" "%OBJ%\library.lib" windowscodecs.lib winhttp.lib shell32.lib ole32.lib user32.lib advapi32.lib
+cl %COMMON% /Fo"%OBJ%\BackendIntegrationTaskRunner.obj" /c "%ROOT%\src\TaskRunner.cpp"
+if errorlevel 1 exit /b 11
+link /nologo /MACHINE:X86 /SUBSYSTEM:CONSOLE,6.01 /Brepro /OUT:"%OUT%" "%OBJ%\BackendIntegrationProductBackend.obj" "%OBJ%\BackendIntegrationTest.obj" "%OBJ%\BackendIntegrationTaskRunner.obj" "%OBJ%\network.lib" "%OBJ%\platform.lib" "%OBJ%\library.lib" windowscodecs.lib winhttp.lib ws2_32.lib shell32.lib ole32.lib user32.lib advapi32.lib
 if errorlevel 1 exit /b 12
 set "ROUND=%ROOT%\build\tests\backend-integration-%RANDOM%"
 "%OUT%" --runtime "%RUNTIME%" --fixture "%FIXTURE%" --root "%ROUND%"
