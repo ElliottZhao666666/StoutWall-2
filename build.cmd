@@ -1,11 +1,15 @@
 @echo off
 setlocal EnableExtensions
 set "ROOT=%~dp0"
-set "VSBUILD=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
-set "RUNTIME=%ROOT%..\StoutWall_Rebuild\runtime-copy"
-if not exist "%VSBUILD%" (echo Visual Studio Build Tools 18 vcvarsall.bat was not found.& exit /b 2)
-if not exist "%RUNTIME%\GalleryBase.EDT" (echo Original runtime-copy folder was not found.& exit /b 3)
-call "%VSBUILD%" x86 10.0.26100.0 -vcvars_ver=14.44 >nul
+if not defined STOUTWALL_VSBUILD set "STOUTWALL_VSBUILD=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+if not defined STOUTWALL_SDK set "STOUTWALL_SDK=10.0.26100.0"
+if not defined STOUTWALL_MSVC_VERSION set "STOUTWALL_MSVC_VERSION=14.44"
+set "RUNTIME=%ROOT%dependencies\runtime"
+if not exist "%STOUTWALL_VSBUILD%" (echo Set STOUTWALL_VSBUILD to an installed vcvarsall.bat.& exit /b 2)
+for %%F in (cabarc.exe ForTheme.EDT GalleryBase.EDT) do (
+    if not exist "%RUNTIME%\%%F" (echo Missing repository dependency: %%F& exit /b 3)
+)
+call "%STOUTWALL_VSBUILD%" x86 %STOUTWALL_SDK% -vcvars_ver=%STOUTWALL_MSVC_VERSION% >nul
 if errorlevel 1 exit /b 4
 set "OUT=%ROOT%build\win32"
 set "OBJ=%ROOT%build\obj"

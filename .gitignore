@@ -23,3 +23,9 @@ local.settings.json
 /resources/*.res
 /tools/__pycache__/
 /resources/assets.dll
+
+# Required original runtime inputs are part of a standalone checkout.
+!dependencies/runtime/
+!dependencies/runtime/cabarc.exe
+!dependencies/runtime/ForTheme.EDT
+!dependencies/runtime/GalleryBase.EDT
