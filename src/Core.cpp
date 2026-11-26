@@ -1117,7 +1117,7 @@ namespace v6
         try
         {
             session.h = WinHttpOpen(
-                L"StoutWall-v6/20261120-v6-04",
+                STOUTWALL_USER_AGENT,
                 proxy.empty() ? WINHTTP_ACCESS_TYPE_NO_PROXY : WINHTTP_ACCESS_TYPE_NAMED_PROXY,
                 proxy.empty() ? WINHTTP_NO_PROXY_NAME : proxy.c_str(), WINHTTP_NO_PROXY_BYPASS, 0);
             Win(session.h != nullptr, "WinHttpOpen");

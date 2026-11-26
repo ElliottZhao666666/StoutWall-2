@@ -3,6 +3,7 @@
 #include "ReplicaUi.hpp"
 #include "OriginalLayout.hpp"
 #include "Assets.hpp"
+#include "Version.h"
 #include <commctrl.h>
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -105,7 +106,8 @@ HWND ReplicaUi::CreateProductWindow(const wchar_t* rawName, HWND owner) {
         OffsetRect(&r,(work.left+work.right-r.left-r.right)/2,(work.top+work.bottom-r.top-r.bottom)/2);
     }
     Window state;state.name=name;
-    HWND h=CreateWindowExW(exStyle,kClassName,d->title,style,r.left,r.top,
+    const std::wstring title=name==L"_启动窗口" ? L"胖哥每日壁纸 V" STOUTWALL_VERSION_WIDE : d->title;
+    HWND h=CreateWindowExW(exStyle,kClassName,title.c_str(),style,r.left,r.top,
         r.right-r.left,r.bottom-r.top,owner,nullptr,instance_,this);
     if(!h)return nullptr;
     if(icon_) {
@@ -151,7 +153,8 @@ bool ReplicaUi::CreateChildren(Window& window) {
             if(type==L"Lib3.8") { x=(bounds.right-width)/2;y=MulDiv(35,dpi_,96); }
         }
         const DWORD exStyle=type==L"Lib3.2"||type==L"Lib3.3"?WS_EX_CONTROLPARENT:0;
-        HWND child=CreateWindowExW(exStyle,cls,c.text,Style(c),x,y,width,
+        const wchar_t* text=std::wstring(c.text)==L"V1.1.0.2509" ? L"V" STOUTWALL_VERSION_WIDE : c.text;
+        HWND child=CreateWindowExW(exStyle,cls,text,Style(c),x,y,width,
             type==L"Lib3.16" ? height+MulDiv(170,dpi_,96) : height,parent,
             reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)),instance_,nullptr);
         if(!child) { success=false;continue; }
@@ -211,6 +214,9 @@ void ReplicaUi::ActivatePage(Window& window,HWND tab,int page) {
     for(const auto& child:window.children)
         if(child.page!=-1&&GetParent(child.hwnd)==tab)
             ShowWindow(child.hwnd,child.visible&&child.page>=0&&child.page==page?SW_SHOWNA:SW_HIDE);
+    // Group boxes have transparent interiors. Erase the complete tab surface
+    // after hiding the old page so its image cannot remain behind them.
+    RedrawWindow(tab,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
 }
 void ReplicaUi::LoadControlImage(Window& window,Child& child) {
     if(!IsImage(child.type)&&!(window.name==L"大图窗口"&&child.type==L"Lib3.8")) return;
@@ -344,6 +350,14 @@ LRESULT CALLBACK ReplicaUi::ParentProc(HWND hwnd,UINT message,WPARAM wParam,LPAR
     auto* self=reinterpret_cast<ReplicaUi*>(data);
     if(self) {
         if(message==WM_NCDESTROY)self->OnSubclassNcDestroy(hwnd);
+        if(message==WM_ERASEBKGND && (GetWindowLongPtrW(hwnd,GWL_STYLE)&BS_TYPEMASK)==BS_GROUPBOX) {
+            wchar_t cls[16]{};GetClassNameW(hwnd,cls,_countof(cls));
+            if(_wcsicmp(cls,L"Button")==0) {
+                RECT bounds{};GetClientRect(hwnd,&bounds);
+                FillRect(reinterpret_cast<HDC>(wParam),&bounds,reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1));
+                return 1;
+            }
+        }
         HWND root=GetAncestor(hwnd,GA_ROOT);
         if(message==WM_CONTEXTMENU) {
             HWND source=reinterpret_cast<HWND>(wParam);
@@ -409,9 +423,9 @@ void ReplicaUi::OnDrawItem(HWND hwnd,DRAWITEMSTRUCT* draw) {
         const float height=static_cast<float>(draw->rcItem.bottom-draw->rcItem.top);
         const auto paintImage=[&](const Child& picture,float canvasWidth,float canvasHeight,float opacity) {
             if(picture.image.empty())return;
-            ComPtr<ID2D1Bitmap> bitmap;
-            if(FAILED(imageTarget_->CreateBitmap(D2D1::SizeU(picture.imageWidth,picture.imageHeight),
-                picture.image.data(),picture.imageWidth*4,format,bitmap.GetAddressOf())))return;
+            if(!picture.imageBitmap && FAILED(imageTarget_->CreateBitmap(D2D1::SizeU(picture.imageWidth,picture.imageHeight),
+                picture.image.data(),picture.imageWidth*4,format,picture.imageBitmap.GetAddressOf())))return;
+            const auto& bitmap=picture.imageBitmap;
             if(picture.imageMode==ImageMode::Tile) {
                 ComPtr<ID2D1BitmapBrush> brush;
                 const auto repeat=D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_WRAP,D2D1_EXTEND_MODE_WRAP);
@@ -443,7 +457,10 @@ void ReplicaUi::OnDrawItem(HWND hwnd,DRAWITEMSTRUCT* draw) {
             opacity=window->viewerCloseOpacity/255.f;
         }
         paintImage(child,width,height,opacity);
-        if(imageTarget_->EndDraw()==D2DERR_RECREATE_TARGET)imageTarget_.Reset();
+        if(imageTarget_->EndDraw()==D2DERR_RECREATE_TARGET) {
+            for(auto& entry:windows_)for(auto& picture:entry.second.children)picture.imageBitmap.Reset();
+            imageTarget_.Reset();
+        }
         if(draw->CtlType==ODT_BUTTON&&(draw->itemState&ODS_FOCUS)) DrawFocusRect(draw->hDC,&draw->rcItem);
         return;
     }
@@ -533,8 +550,10 @@ void ReplicaUi::SetImageMode(const std::wstring& w,const std::wstring& c,ImageMo
 }
 bool ReplicaUi::SetImage(const std::wstring& w,const std::wstring& c,const std::vector<unsigned char>& bytes) {
     auto* child=Find(nullptr,w,c);if(!child||(!IsImage(child->type)&&!(w==L"大图窗口"&&child->type==L"Lib3.8")))return false;
-    child->image.clear();child->imageWidth=child->imageHeight=0;
-    if(bytes.empty()){InvalidateRect(child->hwnd,nullptr,TRUE);return true;}
+    if(bytes.empty()){
+        child->image.clear();child->imageWidth=child->imageHeight=0;child->imageBitmap.Reset();
+        InvalidateRect(child->hwnd,nullptr,TRUE);return true;
+    }
     if(bytes.size()>(std::numeric_limits<UINT>::max)())return false;
     std::vector<BYTE> copy(bytes.begin(),bytes.end());
     ComPtr<IWICImagingFactory> factory;
@@ -545,20 +564,26 @@ bool ReplicaUi::SetImage(const std::wstring& w,const std::wstring& c,const std::
     if(FAILED(factory->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnLoad,&decoder)))return false;
     ComPtr<IWICBitmapFrameDecode> frame;if(FAILED(decoder->GetFrame(0,&frame)))return false;
     UINT width=0,height=0;if(FAILED(frame->GetSize(&width,&height))||!width||!height||width>12000||height>12000)return false;
-    ComPtr<IWICFormatConverter> converter;if(FAILED(factory->CreateFormatConverter(&converter)))return false;
-    if(FAILED(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0.0,WICBitmapPaletteTypeMedianCut)))return false;
-    const double scale=w==L"大图窗口" ? 1.0 : (std::min)(1.0,1200.0/(std::max)(static_cast<double>(width),static_cast<double>(height)));
+    const bool wallpaper=c==L"图片框EX1";
+    const double scale=wallpaper
+        ? (std::min)({1.0,1920.0/width,1080.0/height})
+        : (std::min)(1.0,1200.0/(std::max)(static_cast<double>(width),static_cast<double>(height)));
     const UINT targetWidth=(std::max)(1u,static_cast<UINT>(width*scale));
     const UINT targetHeight=(std::max)(1u,static_cast<UINT>(height*scale));
-    ComPtr<IWICBitmapScaler> scaler;IWICBitmapSource* source=converter.Get();
+    // Scale the decoder source before converting to 32-bit pixels, allowing
+    // WIC's JPEG decoder to use its reduced-resolution decode path.
+    ComPtr<IWICBitmapScaler> scaler;IWICBitmapSource* source=frame.Get();
     if(targetWidth!=width||targetHeight!=height) {
-        if(FAILED(factory->CreateBitmapScaler(&scaler))||FAILED(scaler->Initialize(converter.Get(),targetWidth,targetHeight,WICBitmapInterpolationModeFant)))return false;
+        if(FAILED(factory->CreateBitmapScaler(&scaler))||FAILED(scaler->Initialize(frame.Get(),targetWidth,targetHeight,WICBitmapInterpolationModeFant)))return false;
         source=scaler.Get();
     }
+    ComPtr<IWICFormatConverter> converter;if(FAILED(factory->CreateFormatConverter(&converter)))return false;
+    if(FAILED(converter->Initialize(source,GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0.0,WICBitmapPaletteTypeMedianCut)))return false;
     const UINT stride=targetWidth*4;
     if(targetHeight>(std::numeric_limits<UINT>::max)()/stride)return false;
     std::vector<unsigned char> pixels(static_cast<size_t>(stride)*targetHeight);
-    if(FAILED(source->CopyPixels(nullptr,stride,static_cast<UINT>(pixels.size()),pixels.data())))return false;
+    if(FAILED(converter->CopyPixels(nullptr,stride,static_cast<UINT>(pixels.size()),pixels.data())))return false;
+    child->imageBitmap.Reset();
     child->image=std::move(pixels);child->imageWidth=targetWidth;child->imageHeight=targetHeight;
     if(w==L"大图窗口"&&c==L"图片框EX1")if(auto* button=Find(nullptr,w,L"超级按钮EX1"))InvalidateRect(button->hwnd,nullptr,FALSE);
     InvalidateRect(child->hwnd,nullptr,TRUE);return true;

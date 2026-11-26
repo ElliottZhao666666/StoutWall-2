@@ -2,6 +2,7 @@
 #define NOMINMAX
 
 #include "ProductUi.hpp"
+#include "GalleryImage.hpp"
 #include "Assets.hpp"
 #include "ThemeName.hpp"
 
@@ -209,11 +210,12 @@ std::wstring PickPath(HWND owner, const wchar_t* title, const std::wstring& init
 }
 
 std::vector<unsigned char> ReadGalleryPreview(const std::wstring& date, int size) {
-    const int32_t length = Library_GetImage(date.c_str(), size + 1, nullptr, 0);
+    // Display UHD selections using the gallery's independent 1080p image.
+    // Export and wallpaper APIs continue to use the actual selected size.
+    if (size == SWN_UHD) size = SWN_1920x1080;
+    std::vector<unsigned char> bytes;
+    const int32_t length = ReadGalleryImage(date.c_str(), size + 1, bytes);
     if (length <= 0) throw std::runtime_error(u8"无法读取所选尺寸的图库预览。");
-    std::vector<unsigned char> bytes(static_cast<size_t>(length));
-    if (Library_GetImage(date.c_str(), size + 1, bytes.data(), length) != length)
-        throw std::runtime_error(u8"无法读取完整的图库预览。");
     return bytes;
 }
 
@@ -358,7 +360,7 @@ struct ProductUi::State {
     int gallerySize = 0;
     std::wstring pendingGalleryDate, pendingRelocationPath;
     std::vector<std::wstring> galleryRows;
-    std::vector<unsigned char> noPicture, drawnPreview;
+    std::vector<unsigned char> noPicture, drawnPreview, drawnMainPreview;
     PreviewKey requestedPreview, cachedPreview;
     uint64_t previewTask = 0;
     std::vector<unsigned char> previewBytes;
@@ -560,7 +562,8 @@ struct ProductUi::State {
     }
 
     PreviewKey CurrentPreviewKey() const {
-        return {snapshot.galleryDir, snapshot.hasSelected ? RecordDate(snapshot.selected) : L"", gallerySize};
+        return {snapshot.galleryDir, snapshot.hasSelected ? RecordDate(snapshot.selected) : L"",
+                gallerySize == SWN_UHD ? SWN_1920x1080 : gallerySize};
     }
 
     void RequestPreview(const PreviewKey& key) {
@@ -607,8 +610,10 @@ struct ProductUi::State {
         std::wstring details = selected ? GalleryDetails(snapshot.selected, index, snapshot.records.size())
                                          : L"请从左侧列表内选择一个壁纸以查看和进行操作";
         const std::vector<unsigned char>* image = &noPicture;
-        if (selected && gallerySize == static_cast<int>(snapshot.config.currentWall.size)) {
-            if (!snapshot.selectedImage.empty()) image = &snapshot.selectedImage;
+        const int activePreviewSize = snapshot.config.currentWall.size == SWN_UHD
+            ? SWN_1920x1080 : static_cast<int>(snapshot.config.currentWall.size);
+        if (selected && key.size == activePreviewSize) {
+            if (!snapshot.selectedPreviewImage.empty()) image = &snapshot.selectedPreviewImage;
         } else if (selected) {
             if (cachedPreview == key) {
                 if (!previewBytes.empty()) image = &previewBytes;
@@ -764,7 +769,9 @@ struct ProductUi::State {
         } else if (control == L"多功能按钮EX1") {
             ExportGalleryRecord();
         } else if (control == L"图片框EX1" && event.notification == STN_CLICKED) {
-            if (gallerySize == static_cast<int>(snapshot.config.currentWall.size)) OpenViewer(snapshot.selectedImage);
+            const int activePreviewSize = snapshot.config.currentWall.size == SWN_UHD
+                ? SWN_1920x1080 : static_cast<int>(snapshot.config.currentWall.size);
+            if (CurrentPreviewKey().size == activePreviewSize) OpenViewer(snapshot.selectedPreviewImage);
             else if (cachedPreview == CurrentPreviewKey()) OpenViewer(previewBytes);
         }
     }
@@ -784,7 +791,10 @@ struct ProductUi::State {
         ui->SetText(kMainWindow,L"编辑框EX2",L"【壁纸库信息】\r\n\r\n壁纸库位置："+snapshot.galleryDir+
             L"\r\n壁纸数量："+std::to_wstring(snapshot.total)+L"\r\n收藏数量："+std::to_wstring(snapshot.favorites)+
             L"\r\n自动保存："+(config.autoSave?L"已打开":L"已关闭"));
-        if (!snapshot.image.empty()) ui->SetImage(kMainWindow,L"图片框EX1",snapshot.image);
+        if (!snapshot.previewImage.empty() && drawnMainPreview != snapshot.previewImage) {
+            if (ui->SetImage(kMainWindow,L"图片框EX1",snapshot.previewImage))
+                drawnMainPreview = snapshot.previewImage;
+        }
         ui->SetChecked(L"_启动窗口", L"选择框EX1", config.autoSave != 0);
         ui->SetChecked(L"_启动窗口", L"选择框EX2",
             config.mode != SWP_FAVORITES && config.changeRandom != 0);

@@ -16,21 +16,23 @@ set "OBJ=%ROOT%build\obj"
 if not exist "%OUT%" mkdir "%OUT%"
 if not exist "%OBJ%" mkdir "%OBJ%"
 set "COMMON=/nologo /std:c++17 /EHsc /W4 /utf-8 /MT /O2 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0601 /DWINVER=0x0601 /Brepro"
+rc /nologo /dSTOUTWALL_DLL_VERSION /fo"%OBJ%\dll-version.res" "%ROOT%resources\app.rc"
+if errorlevel 1 exit /b 9
 
 echo [1/6] Building static-CRT network.dll
-cl %COMMON% /Fo"%OBJ%\Network.obj" /DSWN_BUILD /LD "%ROOT%src\Network.cpp" /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /IMPLIB:"%OBJ%\network.lib" /OUT:"%OUT%\network.dll" winhttp.lib windowscodecs.lib ole32.lib
+cl %COMMON% /Fo"%OBJ%\Network.obj" /DSWN_BUILD /LD "%ROOT%src\Network.cpp" "%OBJ%\dll-version.res" /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /IMPLIB:"%OBJ%\network.lib" /OUT:"%OUT%\network.dll" winhttp.lib windowscodecs.lib ole32.lib
 if errorlevel 1 exit /b 10
 echo [2/6] Building static-CRT platform.dll
-cl %COMMON% /Fo"%OBJ%\Platform.obj" /DSWP_BUILD /LD "%ROOT%src\Platform.cpp" /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /IMPLIB:"%OBJ%\platform.lib" /OUT:"%OUT%\platform.dll" shell32.lib ole32.lib user32.lib
+cl %COMMON% /Fo"%OBJ%\Platform.obj" /DSWP_BUILD /LD "%ROOT%src\Platform.cpp" "%OBJ%\dll-version.res" /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /IMPLIB:"%OBJ%\platform.lib" /OUT:"%OUT%\platform.dll" shell32.lib ole32.lib user32.lib
 if errorlevel 1 exit /b 11
 echo [3/6] Building static-CRT library.dll
-cl %COMMON% /Fo"%OBJ%\Library.obj" /LD "%ROOT%src\Library.cpp" /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /IMPLIB:"%OBJ%\library.lib" /OUT:"%OUT%\library.dll"
+cl %COMMON% /Fo"%OBJ%\Library.obj" /LD "%ROOT%src\Library.cpp" "%OBJ%\dll-version.res" /link /MACHINE:X86 /SUBSYSTEM:WINDOWS,6.01 /Brepro /IMPLIB:"%OBJ%\library.lib" /OUT:"%OUT%\library.dll"
 if errorlevel 1 exit /b 12
 echo [4/6] Building resource-only assets.dll
 pushd "%ROOT%resources"
 rc /nologo /c65001 /fo"%OBJ%\assets.res" assets.rc
 if errorlevel 1 (popd& exit /b 13)
-link /nologo /dll /noentry /nodefaultlib /noimplib /machine:X86 /Brepro /out:"%OUT%\assets.dll" "%OBJ%\assets.res"
+link /nologo /dll /noentry /nodefaultlib /noimplib /machine:X86 /Brepro /out:"%OUT%\assets.dll" "%OBJ%\assets.res" "%OBJ%\dll-version.res"
 if errorlevel 1 (popd& exit /b 14)
 rc /nologo /fo"%OBJ%\app.res" app.rc
 if errorlevel 1 (popd& exit /b 15)

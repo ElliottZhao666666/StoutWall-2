@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include "NetworkApi.h"
+#include "Version.h"
 #include <winhttp.h>
 #include <algorithm>
 #include <atomic>
@@ -111,7 +112,7 @@ DWORD Get(const std::wstring& url,const SWN_Options* o,Reply& reply) {
     if(u.nScheme!=INTERNET_SCHEME_HTTPS||!u.dwHostNameLength)return ERROR_INVALID_NAME;
     std::wstring resource(path,u.dwUrlPathLength);resource.append(extra,u.dwExtraInfoLength);if(resource.empty())resource=L"/";
     Handles h(nullptr);std::wstring proxy=o?o->proxy:L"";
-    h.s=WinHttpOpen(L"StoutWall/2.0",proxy.empty()?WINHTTP_ACCESS_TYPE_DEFAULT_PROXY:WINHTTP_ACCESS_TYPE_NAMED_PROXY,
+    h.s=WinHttpOpen(STOUTWALL_USER_AGENT,proxy.empty()?WINHTTP_ACCESS_TYPE_DEFAULT_PROXY:WINHTTP_ACCESS_TYPE_NAMED_PROXY,
         proxy.empty()?WINHTTP_NO_PROXY_NAME:proxy.c_str(),WINHTTP_NO_PROXY_BYPASS,WINHTTP_FLAG_ASYNC);if(!h.s)return LastError();
     const int timeout=static_cast<int>(std::min<DWORD>(total,5000));
     if(!WinHttpSetTimeouts(h.s,timeout,timeout,timeout,timeout))return NormalizeError(LastError(),cancel,start,total);

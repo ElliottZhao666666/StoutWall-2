@@ -52,6 +52,9 @@ public:
     bool SetImage(const std::wstring& window,const std::wstring& control,const std::vector<unsigned char>& bytes);
     static LRESULT CALLBACK WindowProc(HWND,UINT,WPARAM,LPARAM);
 private:
+#ifdef STOUTWALL_PREVIEW_TEST
+    friend struct PreviewProbe;
+#endif
     struct Child {
         std::wstring name,type;
         HWND hwnd=nullptr;
@@ -60,6 +63,7 @@ private:
         bool visible=true;
         UINT imageWidth=0,imageHeight=0;
         std::vector<unsigned char> image;
+        mutable Microsoft::WRL::ComPtr<ID2D1Bitmap> imageBitmap;
         ImageMode imageMode=ImageMode::Stretch;
     };
     struct Window {

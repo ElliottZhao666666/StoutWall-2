@@ -34,7 +34,10 @@ struct ProductSnapshot {
     SWP_Config config{};
     SWL_Record current{}, selected{};
     std::vector<SWL_Record> records;
-    std::vector<unsigned char> image, selectedImage;
+    // Current desktop image remains full resolution. Browsing only reads a
+    // display source; applying and exporting load the requested original size.
+    std::vector<unsigned char> image;
+    std::vector<unsigned char> previewImage, selectedPreviewImage;
     std::wstring status, galleryDir;
     int total = 0, favorites = 0;
     DWORD intervalMs = 0;

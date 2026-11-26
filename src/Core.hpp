@@ -1,4 +1,5 @@
 #pragma once
+#include "Version.h"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -17,7 +18,7 @@ namespace v6
 {
     namespace fs = std::filesystem;
     using Microsoft::WRL::ComPtr;
-    inline constexpr char Build[] = "0.1.0-dev";
+    inline constexpr char Build[] = STOUTWALL_VERSION_STRING;
     inline constexpr wchar_t DllHash[] = L"AF9AAF5A5B2770632EAA7BAA8D65CB02C773EDB057BB694CF6E7960370F6BEF4";
     inline constexpr int ClientWidth = 1120, ClientHeight = 700, NavWidth = 210, PreviewWidth = 640,
                          PreviewHeight = 360;

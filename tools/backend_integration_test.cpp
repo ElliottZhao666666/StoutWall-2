@@ -148,6 +148,16 @@ void CheckTick(const fs::path& runtime, const fs::path& fixture, const fs::path&
     CheckCurrent(snapshot, root, second);
     Require(snapshot.config.renderPoint == 2 && snapshot.config.currentWall.size == 0,
             "failed wallpaper apply changed the cursor or configured size");
+    snapshot = Run(backend, ProductAction::ChangeSize, 0); // Warm the image before holding its output file.
+    const HANDLE transient = CreateFileW((root / L"Current_Wall.jpg").c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(transient != INVALID_HANDLE_VALUE, "unable to hold image for transient contention");
+    std::thread release([transient] { Sleep(100); CloseHandle(transient); });
+    try { snapshot = Run(backend, ProductAction::ChangeSize, 0); }
+    catch (...) { release.join(); throw; }
+    release.join();
+    CheckCurrent(snapshot, root, second);
+    std::wcout << L"PASS: short image-file contention recovers; persistent locks preserve state.\n";
     snapshot = Run(backend, ProductAction::Tick);
     CheckCurrent(snapshot, root, third);
 

@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "ProductBackend.hpp"
+#include "GalleryImage.hpp"
 #include "SequenceRandom.hpp"
 #include <algorithm>
 #include <array>
@@ -10,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <list>
 #include <random>
 #include <stdexcept>
 #include <system_error>
@@ -136,9 +138,17 @@ void WriteFile(const fs::path& path, const std::vector<unsigned char>& bytes) {
             Fail(L"Unable to flush image: " + path.wstring());
         }
     }
-    if (!MoveFileExW(temporary.c_str(), path.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    for (int attempt = 0;; ++attempt) {
+        if (MoveFileExW(temporary.c_str(), path.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) break;
         const DWORD error = GetLastError();
+        // A reader or file scanner can briefly hold the image during rapid
+        // changes. Keep the previous file intact and bound the retry to 375 ms.
+        if (attempt < 5 && (error == ERROR_ACCESS_DENIED || error == ERROR_SHARING_VIOLATION ||
+                            error == ERROR_LOCK_VIOLATION)) {
+            Sleep(25 * (attempt + 1));
+            continue;
+        }
         std::error_code ignored; fs::remove(temporary, ignored);
         FailCode(L"Unable to finalize image file", error);
     }
@@ -291,6 +301,13 @@ struct ProductBackend::Impl {
     std::vector<SWL_Record> allRecords;
     std::vector<SWL_Record> sequence;
     std::vector<unsigned char> currentImage, selectedImage;
+    struct CachedImage {
+        std::wstring directory, date;
+        DWORD size;
+        std::vector<unsigned char> bytes;
+    };
+    mutable std::list<CachedImage> imageCache;
+    mutable size_t imageCacheBytes = 0;
     SWL_Record current{}, selected{};
     bool hasCurrent = false, hasSelected = false;
     std::wstring selectedDate;
@@ -349,15 +366,44 @@ struct ProductBackend::Impl {
 
     std::vector<unsigned char> GetImage(const std::wstring& date, DWORD librarySize) const {
         if (librarySize < 1 || librarySize > SWN_SIZE_COUNT) Fail(L"Invalid gallery image size index");
-        int32_t needed = Library_GetImage(date.c_str(), static_cast<int32_t>(librarySize), nullptr, 0);
-        CheckLibrary(needed, L"Getting gallery image size");
-        if (!needed) Fail(L"Gallery returned an empty image");
-        std::vector<unsigned char> bytes(static_cast<size_t>(needed));
-        const int32_t actual = Library_GetImage(date.c_str(), static_cast<int32_t>(librarySize),
-                                                 bytes.data(), needed);
+        const auto directory = galleryDir.wstring();
+        for (auto it = imageCache.begin(); it != imageCache.end(); ++it) {
+            if (it->directory == directory && it->date == date && it->size == librarySize) {
+                imageCache.splice(imageCache.begin(), imageCache, it);
+                return imageCache.front().bytes;
+            }
+        }
+        std::vector<unsigned char> bytes;
+        const int32_t actual = ReadGalleryImage(date.c_str(), static_cast<int32_t>(librarySize), bytes);
         CheckLibrary(actual, L"Reading gallery image");
-        if (actual != needed) Fail(L"Gallery image length changed while reading");
+        if (!actual) Fail(L"Gallery returned an empty image");
+        constexpr size_t cacheLimit = 16 * 1024 * 1024;
+        if (bytes.size() <= cacheLimit) {
+            while (!imageCache.empty() && (imageCache.size() >= 6 || imageCacheBytes + bytes.size() > cacheLimit)) {
+                imageCacheBytes -= imageCache.back().bytes.size();
+                imageCache.pop_back();
+            }
+            imageCache.push_front({directory, date, librarySize, bytes});
+            imageCacheBytes += bytes.size();
+        }
         return bytes;
+    }
+
+    void ClearImageCache() { imageCache.clear(); imageCacheBytes = 0; }
+
+    std::vector<unsigned char> PreviewImage(const SWL_Record& record,
+                                           const std::vector<unsigned char>& original) const {
+        if (config.currentWall.size != SWN_UHD || !libraryOpen) return original;
+        bool found = false; FindRecord(DateOf(record), found);
+        if (found) {
+            try { return GetImage(DateOf(record), LibrarySizeIndex(SWN_1920x1080)); }
+            catch (const std::exception&) {
+                if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
+                // A missing preview must not prevent using an intact UHD image.
+                // The renderer also bounds decoded previews to 1920 x 1080.
+            }
+        }
+        return original;
     }
 
     std::vector<SWL_Record> BuildSequence(DWORD mode, const std::wstring& pinnedDate = {}) {
@@ -445,7 +491,7 @@ struct ProductBackend::Impl {
         SWL_Record record = FindRecord(date, found);
         if (!found) Fail(L"The requested gallery record does not exist");
         selected = record; selectedDate = date; hasSelected = true;
-        selectedImage = GetImage(date, LibrarySizeIndex(config.currentWall.size));
+        RefreshSelectedImage();
     }
 
     void RefreshSelectedImage() {
@@ -453,7 +499,16 @@ struct ProductBackend::Impl {
         bool found = false;
         selected = FindRecord(selectedDate, found);
         if (!found) { hasSelected = false; selectedDate.clear(); selectedImage.clear(); return; }
-        selectedImage = GetImage(selectedDate, LibrarySizeIndex(config.currentWall.size));
+        const DWORD size = config.currentWall.size;
+        if (size == SWN_UHD) {
+            try {
+                selectedImage = GetImage(selectedDate, LibrarySizeIndex(SWN_1920x1080));
+                return;
+            } catch (const std::exception&) {
+                if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) throw;
+            }
+        }
+        selectedImage = GetImage(selectedDate, LibrarySizeIndex(size));
     }
 
     void ApplyCurrent(const SWL_Record& record, std::vector<unsigned char> bytes,
@@ -558,6 +613,7 @@ struct ProductBackend::Impl {
         }
         SWL_Record record = NetworkRecord(metadata);
         CheckLibrary(Library_ImportW(&record, imagePointers.data()), L"Importing five gallery sizes");
+        ClearImageCache();
         LoadRecords();
         return true;
     }
@@ -566,7 +622,8 @@ struct ProductBackend::Impl {
         ProductSnapshot snapshot{};
         snapshot.config = config; snapshot.current = current; snapshot.selected = selected;
         snapshot.records = FilteredRecords(); snapshot.image = currentImage;
-        snapshot.selectedImage = selectedImage; snapshot.status = message.empty() ? status : message;
+        snapshot.selectedPreviewImage = selectedImage; snapshot.status = message.empty() ? status : message;
+        if (hasCurrent) snapshot.previewImage = PreviewImage(current, currentImage);
         snapshot.galleryDir = galleryDir.wstring();
         snapshot.total = static_cast<int>((std::min)(allRecords.size(),
             static_cast<size_t>((std::numeric_limits<int>::max)())));
@@ -929,6 +986,7 @@ struct ProductBackend::Impl {
             if (!hasSelected) Fail(L"Select a gallery record before deleting");
             if (allRecords.size() <= 2) Fail(L"The gallery must retain at least two records");
             CheckLibrary(Library_Delete(selected.date), L"Deleting gallery record");
+            ClearImageCache();
             LoadRecords();
             selectedDate.clear(); hasSelected = false; selectedImage.clear();
             RebuildSequence();
@@ -951,6 +1009,7 @@ struct ProductBackend::Impl {
         case ProductAction::Relocate:
             if (request.text.empty()) Fail(L"Relocation destination is required");
             CheckLibrary(Library_RelocateW(request.text.c_str()), L"Relocating gallery");
+            ClearImageCache();
             galleryDir = fs::absolute(fs::path(request.text)).lexically_normal();
             Put(config.galleryDir, galleryDir.wstring(), L"galleryDir");
             LoadRecords(); RebuildSequence(); SaveConfig(); RefreshSelectedImage();
