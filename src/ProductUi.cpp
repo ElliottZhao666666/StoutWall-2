@@ -2,9 +2,13 @@
 #define NOMINMAX
 
 #include "ProductUi.hpp"
+#include "ProductBackend.hpp"
+#include "ReplicaUi.hpp"
+#include "TaskRunner.hpp"
 #include "GalleryImage.hpp"
 #include "Assets.hpp"
 #include "ThemeName.hpp"
+#include "GalleryWorkbench.hpp"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -35,6 +39,7 @@ constexpr int kRestartClockOperation = 12;
 constexpr int kAutoSaveOperation = 13;
 constexpr int kClearFavoritesOperation = 14;
 constexpr int kReshuffleOperation = 15;
+constexpr int kThumbnailOperation = 16;
 constexpr int kShutdownOperation = 3;
 constexpr int kSourceOperation = 4;
 constexpr int kRelocateOperation = 5;
@@ -278,6 +283,11 @@ struct PreviewKey {
     }
 };
 
+struct ThumbnailBatch {
+    uint64_t generation=0;
+    std::vector<std::pair<size_t,std::vector<unsigned char>>> images;
+};
+
 } // namespace
 
 ProductOptions ParseProductOptions(HINSTANCE instance) {
@@ -357,7 +367,8 @@ struct ProductUi::State {
     bool relocateBusy = false;
     bool updatingRelocationEdit = false;
     int galleryOperation = 0;
-    int gallerySize = 0;
+    GalleryWorkbench workbench;
+    uint64_t thumbnailGeneration=0,thumbnailTask=0;
     std::wstring pendingGalleryDate, pendingRelocationPath;
     std::vector<std::wstring> galleryRows;
     std::vector<unsigned char> noPicture, drawnPreview, drawnMainPreview;
@@ -372,6 +383,42 @@ struct ProductUi::State {
     v6::AssetModule assets;
 
     State(HINSTANCE h, ProductOptions o) : instance(h), options(std::move(o)) {}
+
+    fs::path UiPreferencesPath() const {return fs::path(options.dataRoot)/L"Interface.ini";}
+
+    void SaveUiPreferences() const {
+        const auto path=UiPreferencesPath();
+        const auto appearance=std::to_wstring(ui->AppearanceMode());
+        const auto size=std::to_wstring(workbench.previewSize);
+        WritePrivateProfileStringW(L"Appearance",L"Mode",appearance.c_str(),path.c_str());
+        WritePrivateProfileStringW(L"Gallery",L"PreviewSize",size.c_str(),path.c_str());
+    }
+
+    void RequestThumbnails() {
+        if(!initialized||closing||thumbnailTask||galleryOperation||relocateBusy)return;
+        auto indices=ui->VisibleListItems(kGalleryWindow,L"列表框EX1");
+        if(indices.empty())return;
+        std::vector<std::pair<size_t,std::wstring>> selected;
+        for(const auto index:indices) {
+            const auto date=workbench.DateAt(static_cast<int>(index));
+            if(!date.empty())selected.emplace_back(index,date);
+        }
+        if(selected.empty())return;
+        const int size=workbench.previewSize==SWN_UHD?SWN_1920x1080:workbench.previewSize;
+        thumbnailTask=runner.Submit(kThumbnailOperation,[this,selected=std::move(selected),
+            directory=snapshot.galleryDir,size,generation=thumbnailGeneration]() {
+            if(options.testMode&&IsolatedDestination(options.dataRoot,directory).empty())
+                throw std::runtime_error("Thumbnail gallery is outside the isolated data root");
+            auto batch=std::make_shared<ThumbnailBatch>();batch->generation=generation;
+            for(const auto& item:selected) {
+                if(WaitForSingleObject(runner.CancellationEvent(),0)==WAIT_OBJECT_0)break;
+                std::vector<unsigned char> bytes;
+                try {bytes=ReadGalleryPreview(item.second,size);} catch(const std::exception&) {}
+                batch->images.emplace_back(item.first,std::move(bytes));
+            }
+            TaskResult result;result.payload=std::move(batch);return result;
+        });
+    }
 
     bool RecordUiTestAction(const wchar_t* action,const std::wstring& value) const {
         // Only --ui-test redirects external actions. Normal runs use the system APIs.
@@ -563,7 +610,7 @@ struct ProductUi::State {
 
     PreviewKey CurrentPreviewKey() const {
         return {snapshot.galleryDir, snapshot.hasSelected ? RecordDate(snapshot.selected) : L"",
-                gallerySize == SWN_UHD ? SWN_1920x1080 : gallerySize};
+                workbench.previewSize == SWN_UHD ? SWN_1920x1080 : workbench.previewSize};
     }
 
     void RequestPreview(const PreviewKey& key) {
@@ -582,27 +629,41 @@ struct ProductUi::State {
         if (ui->GetText(kGalleryWindow, L"按钮EX6").empty()) return;
         const auto key = CurrentPreviewKey();
         const int index = GalleryIndex(key.date);
-        std::vector<std::wstring> rows;
-        rows.reserve(snapshot.records.size());
-        for (const auto& record : snapshot.records)
-            rows.push_back(RecordDate(record) + (record.favorite ? L"[收藏]" : L""));
+        workbench.items.clear();
+        workbench.items.reserve(snapshot.records.size());
+        const std::wstring currentDate=snapshot.hasCurrent?RecordDate(snapshot.current):L"";
+        for (const auto& record : snapshot.records) {
+            const std::wstring date=RecordDate(record);
+            workbench.items.push_back({date,RecordTitle(record),record.favorite!=0,date==currentDate});
+        }
+        auto rows=workbench.Rows();
         if (opened) {
             ui->SetItems(kGalleryWindow, L"组合框EX2", kSizes);
-            ui->SetSelection(kGalleryWindow, L"组合框EX2", gallerySize);
+            ui->SetSelection(kGalleryWindow, L"组合框EX2", workbench.previewSize);
         }
         if (opened || rows != galleryRows) {
+            ++thumbnailGeneration;
+            ui->ClearListImages(kGalleryWindow,L"列表框EX1");
             ui->SetItems(kGalleryWindow, L"列表框EX1", rows);
             galleryRows = std::move(rows);
         }
-        const int wantedIndex = galleryOperation && !pendingGalleryDate.empty() ? GalleryIndex(pendingGalleryDate) : index;
+        const int wantedIndex=workbench.DisplayIndex(galleryOperation&&!pendingGalleryDate.empty()?pendingGalleryDate:key.date);
         if (ui->Selection(kGalleryWindow, L"列表框EX1") != wantedIndex)
             ui->SetSelection(kGalleryWindow, L"列表框EX1", wantedIndex);
 
-        const bool selected = index >= 0;
+        const bool selected = index >= 0&&wantedIndex>=0;
         const bool idle = !closing && !galleryOperation && !relocateBusy;
         ui->SetEnabled(kGalleryWindow, L"列表框EX1", idle);
         ui->SetEnabled(kGalleryWindow, L"组合框EX2", idle);
         ui->SetEnabled(kGalleryWindow, L"按钮EX6", idle);
+        ui->SetEnabled(kGalleryWindow,L"全部壁纸",idle);
+        ui->SetEnabled(kGalleryWindow,L"仅收藏",idle);
+        ui->SetEnabled(kGalleryWindow,L"按钮EX4",idle);
+        ui->SetText(kGalleryWindow,L"全部壁纸",workbench.favoritesOnly?L"全部壁纸":L"全部壁纸 ✓");
+        ui->SetText(kGalleryWindow,L"仅收藏",workbench.favoritesOnly?L"仅收藏 ✓":L"仅收藏");
+        ui->SetText(kGalleryWindow,L"图库统计",L"显示 "+std::to_wstring(workbench.visibleItems.size())+L" 张 · 库内 "+
+            std::to_wstring(snapshot.total)+L" 张 · 收藏 "+std::to_wstring(snapshot.favorites)+
+            L" 张  |  图库预览尺寸独立于桌面设置；点击右侧图片查看大图。");
         for (const auto* control : {L"按钮EX1", L"按钮EX2", L"按钮EX3", L"多功能按钮EX1"})
             ui->SetEnabled(kGalleryWindow, control, idle && selected);
         ui->SetText(kGalleryWindow, L"按钮EX1", selected && snapshot.selected.favorite ? L"取消收藏" : L"收藏");
@@ -632,6 +693,7 @@ struct ProductUi::State {
                 drawnPreview = noPicture;
             }
         }
+        RequestThumbnails();
     }
 
     void SelectGalleryRecord(const std::wstring& date) {
@@ -682,20 +744,23 @@ struct ProductUi::State {
         UpdateRelocationUi();
     }
 
-    void ExportGalleryRecord() {
+    void ExportGalleryRecord(bool showMenu = true) {
         const HWND owner = DialogOwner(ui->MainWindow());
         const auto record = snapshot.selected;
         const auto date = RecordDate(record);
         const auto directory = snapshot.galleryDir;
         const auto details = GalleryDetails(record, GalleryIndex(date), snapshot.records.size());
-        const int currentSize = gallerySize;
-        const HMENU menu = CreatePopupMenu();
-        if (!menu) return;
-        AppendMenuW(menu, MF_STRING, 1, L"导出当前预览尺寸");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        for (size_t i = 0; i < kSizes.size(); ++i) AppendMenuW(menu, MF_STRING, 2 + i, kSizes[i].c_str());
-        AppendMenuW(menu, MF_STRING, 7, L"导出全部尺寸");
-        const int choice = static_cast<int>(ChooseMenu(menu, owner));
+        const int currentSize = workbench.previewSize;
+        int choice=1;
+        if(showMenu) {
+            const HMENU menu=CreatePopupMenu();
+            if(!menu)return;
+            AppendMenuW(menu,MF_STRING,1,L"导出图库当前所选尺寸");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            for(size_t i=0;i<kSizes.size();++i)AppendMenuW(menu,MF_STRING,2+i,kSizes[i].c_str());
+            AppendMenuW(menu,MF_STRING,7,L"导出全部尺寸（附壁纸信息）");
+            choice=static_cast<int>(ChooseMenu(menu,owner,true));
+        }
         if (choice < 1 || choice > 7 || closing) return;
         const bool allSizes = choice == 7;
         const int size = choice == 1 ? currentSize : choice - 2;
@@ -720,21 +785,41 @@ struct ProductUi::State {
     }
 
     void HandleGalleryEvent(const UiEvent& event) {
+        if(event.control==L"__thumbnails__") {RequestThumbnails();return;}
         if (galleryOperation || relocateBusy) return;
         const auto& control = event.control;
         if (control == L"列表框EX1" && event.notification == LBN_SELCHANGE && event.selection >= 0 &&
-            static_cast<size_t>(event.selection) < snapshot.records.size()) {
-            SelectGalleryRecord(RecordDate(snapshot.records[static_cast<size_t>(event.selection)]));
+            !workbench.DateAt(event.selection).empty()) {
+            SelectGalleryRecord(workbench.DateAt(event.selection));
             return;
         }
         if (control == L"组合框EX2" && event.notification == CBN_SELCHANGE) {
             if (event.selection >= 0 && event.selection < SWN_SIZE_COUNT) {
-                gallerySize = event.selection;
+                workbench.previewSize = event.selection;
+                galleryRows.clear();
                 UpdateGalleryUi();
+                SaveUiPreferences();
             }
             return;
         }
+        if(control==L"多功能按钮EX1"&&(event.notification==BN_CLICKED||event.notification==BCN_DROPDOWN)) {
+            if(snapshot.hasSelected&&workbench.DisplayIndex(RecordDate(snapshot.selected))>=0)
+                ExportGalleryRecord(event.notification==BCN_DROPDOWN);
+            return;
+        }
         if (event.notification != BN_CLICKED) return;
+        if(control==L"浏览页") {ui->ShowWorkbenchPage(false);RequestThumbnails();return;}
+        if(control==L"全部壁纸"||control==L"仅收藏") {
+            workbench.favoritesOnly=control==L"仅收藏";
+            UpdateGalleryUi();
+            if(workbench.DisplayIndex(RecordDate(snapshot.selected))<0&&!workbench.DateAt(0).empty())
+                SelectGalleryRecord(workbench.DateAt(0));
+            return;
+        }
+        if(control==L"按钮EX4") {
+            OpenTheme(ui->WindowHandle(kGalleryWindow));
+            return;
+        }
         if (control == L"按钮EX6") {
             cachedPreview = {};
             previewTask = 0;
@@ -744,7 +829,7 @@ struct ProductUi::State {
         }
         const auto date = RecordDate(snapshot.selected);
         const int index = GalleryIndex(date);
-        if (!snapshot.hasSelected || index < 0 || ui->Selection(kGalleryWindow, L"列表框EX1") != index) return;
+        if (!snapshot.hasSelected || index < 0 || ui->Selection(kGalleryWindow, L"列表框EX1") != workbench.DisplayIndex(date)) return;
         const auto directory = snapshot.galleryDir;
         const auto sameGallery = [&]() { return !relocateBusy && snapshot.galleryDir == directory; };
         const HWND owner = DialogOwner(ui->MainWindow());
@@ -780,16 +865,16 @@ struct ProductUi::State {
         if(snapshot.intervalMs!=value.intervalMs) ScheduleNextTick(value.intervalMs);
         snapshot = value;
         const auto& config = snapshot.config;
-        ui->SetText(L"_启动窗口", L"标签EX1", snapshot.hasCurrent ? BoundedText(snapshot.current.title, _countof(snapshot.current.title)) : L"");
-        ui->SetText(L"_启动窗口", L"标签EX2", snapshot.hasCurrent ? BoundedText(snapshot.current.description, _countof(snapshot.current.description)) : L"");
-        ui->SetText(kMainWindow,L"标签EX3",snapshot.hasCurrent?L"(C) "+BoundedText(snapshot.current.author,_countof(snapshot.current.author)):L"");
+        ui->SetText(L"_启动窗口", L"标签EX1", snapshot.hasCurrent ? BoundedText(snapshot.current.title, _countof(snapshot.current.title)) : L"今日壁纸");
+        ui->SetText(L"_启动窗口", L"标签EX2", snapshot.hasCurrent ? BoundedText(snapshot.current.description, _countof(snapshot.current.description)) : L"暂未获取壁纸，可刷新今日壁纸或选择壁纸库轮播。");
+        ui->SetText(kMainWindow,L"标签EX3",snapshot.hasCurrent?L"© "+BoundedText(snapshot.current.author,_countof(snapshot.current.author)):L"");
         const wchar_t* sizes[]={L"3840x2160",L"1920x1200",L"1920x1080",L"1024x768",L"1080x1920"};
         ui->SetText(kMainWindow,L"标签EX4",snapshot.hasCurrent&&config.currentWall.size<5?sizes[config.currentWall.size]:L"");
         auto date=BoundedText(snapshot.current.date,_countof(snapshot.current.date));
         if(date.size()==8){date.insert(6,L".");date.insert(4,L".");}
         ui->SetText(kMainWindow,L"标签EX5",date);
-        ui->SetText(kMainWindow,L"编辑框EX2",L"【壁纸库信息】\r\n\r\n壁纸库位置："+snapshot.galleryDir+
-            L"\r\n壁纸数量："+std::to_wstring(snapshot.total)+L"\r\n收藏数量："+std::to_wstring(snapshot.favorites)+
+        ui->SetText(kMainWindow,L"编辑框EX2",L"【壁纸库信息】\r\n位置："+snapshot.galleryDir+
+            L"\r\n壁纸："+std::to_wstring(snapshot.total)+L" 张  ·  收藏："+std::to_wstring(snapshot.favorites)+L" 张"+
             L"\r\n自动保存："+(config.autoSave?L"已打开":L"已关闭"));
         if (!snapshot.previewImage.empty() && drawnMainPreview != snapshot.previewImage) {
             if (ui->SetImage(kMainWindow,L"图片框EX1",snapshot.previewImage))
@@ -809,8 +894,12 @@ struct ProductUi::State {
         ui->SetEnabled(kMainWindow,L"图片按钮EX2",canStep);
         ui->SetEnabled(kMainWindow,L"图片按钮EX4",!closing&&snapshot.hasCurrent);
         ui->SetEnabled(L"_启动窗口", L"图片按钮EX5", !closing);
-        ui->SetEnabled(kMainWindow,L"按钮EX9",
-            config.mode==SWP_DAILY||config.mode==SWP_FAVORITES||!config.changeRandom);
+        ui->SetText(kMainWindow,L"图片按钮EX4",snapshot.current.favorite?L"★ 已收藏":L"☆ 收藏");
+        ui->SetText(kMainWindow,L"图片按钮EX5",config.paused?L"继续更换":L"暂停更换");
+        ui->SetText(kMainWindow,L"界面状态",std::wstring(config.mode==SWP_DAILY?L"每日一图":config.mode==SWP_GALLERY?L"壁纸库轮播":L"收藏轮播")+
+            (config.paused?L" · 已暂停自动更换":L" · 自动更换中")+
+            (options.testMode?L"  |  隔离测试：不会更改系统壁纸":L""));
+        ui->SetEnabled(kMainWindow,L"按钮EX9",!closing&&config.mode==SWP_GALLERY&&config.changeRandom);
         UpdateGalleryUi();
     }
 
@@ -827,11 +916,13 @@ struct ProductUi::State {
         Shell_NotifyIconW(NIM_DELETE,&data);trayInstalled=false;
     }
 
-    UINT ChooseMenu(HMENU menu, HWND owner) {
+    UINT ChooseMenu(HMENU menu, HWND owner,bool alignToWindow = false) {
         if (!menu)return 0;
         POINT cursor{};GetCursorPos(&cursor);
+        if(alignToWindow) {RECT bounds{};GetWindowRect(owner,&bounds);cursor.x=bounds.right-24;}
         SetForegroundWindow(owner);
-        const UINT command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON|TPM_NONOTIFY,
+        const UINT command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON|TPM_NONOTIFY|
+            (alignToWindow?TPM_RIGHTALIGN|TPM_BOTTOMALIGN:0),
             cursor.x,cursor.y,0,owner,nullptr);
         DestroyMenu(menu);PostMessageW(owner,WM_NULL,0,0);
         return command;
@@ -880,7 +971,9 @@ struct ProductUi::State {
     void OpenViewer(const std::vector<unsigned char>& bytes) {
         if(bytes.empty())return;
         if (!ui->WindowHandle(kViewerWindow)) viewerMode = ReplicaUi::ImageMode::Fit;
-        ui->Show(kViewerWindow,ui->WindowHandle(kGalleryWindow));
+        HWND owner=ui->WindowHandle(kGalleryWindow);
+        if(!owner||!IsWindowVisible(owner))owner=ui->MainWindow();
+        ui->Show(kViewerWindow,owner);
         ui->SetImage(kViewerWindow,L"图片框EX1",bytes);
     }
 
@@ -926,6 +1019,12 @@ struct ProductUi::State {
         if(!ui->WindowHandle(kThemeWindow))return;
         for(const auto* group:{L"分组框EX1",L"分组框EX2",L"分组框EX3",L"分组框EX4"})
             ui->SetEnabled(kThemeWindow,group,!themeBusy);
+        for(const auto* control:{L"编辑框EX1",L"编辑框EX2",L"按钮EX2",L"单选框EX2",L"单选框EX3",L"单选框EX4",
+            L"组合框EX1",L"组合框EX2",L"组合框EX3",L"组合框EX4",L"选择框EX1",L"选择框EX2"})
+            ui->SetEnabled(kThemeWindow,control,!themeBusy);
+        ui->SetEnabled(kThemeWindow,L"单选框EX5",false);
+        ui->SetText(kThemeWindow,L"单选框EX5",L"手动选择（暂未开放）");
+        ui->SetEnabled(kGalleryWindow,L"浏览页",!themeBusy);
         const bool modern=ui->Selection(kThemeWindow,L"单选框EX4")==BST_CHECKED;
         const bool custom=ui->Selection(kThemeWindow,L"单选框EX5")==BST_CHECKED;
         ui->SetEnabled(kThemeWindow,L"单选框EX1",!themeBusy&&snapshot.favorites>0);
@@ -942,14 +1041,19 @@ struct ProductUi::State {
         ui->SetChecked(kThemeWindow,L"单选框EX3",!modern);
         ui->SetChecked(kThemeWindow,L"选择框EX1",true);
         ui->SetVisible(kThemeWindow,L"选择框EX3",modern);
-        ui->SetText(kThemeWindow,L"选择框EX3",L"深色模式 (Win11/10)");
+        ui->SetText(kThemeWindow,L"选择框EX3",L"深色模式");
         ui->SetText(kThemeWindow,L"标签EX4",modern?L"默认主题颜色：":L"指定主题颜色：");
         ui->SetText(kThemeWindow,L"选择框EX1",modern?L"自动主题色":L"透明效果");
     }
 
-    void OpenTheme() {
+    void OpenTheme(HWND owner = nullptr) {
+        if(!owner) {
+            ShowAuxiliary(kGalleryWindow);
+            owner=ui->WindowHandle(kGalleryWindow);
+        }
+        if(!owner)return;
         const bool fresh=!ui->WindowHandle(kThemeWindow);
-        ui->Show(kThemeWindow,ui->MainWindow());
+        ui->Show(kThemeWindow,owner?owner:ui->MainWindow());
         if(!fresh||!ui->WindowHandle(kThemeWindow))return;
         ui->SetItems(kThemeWindow,L"组合框EX1",{L"1分钟",L"10分钟",L"30分钟",L"1小时",L"6小时",L"1天"});
         ui->SetItems(kThemeWindow,L"组合框EX2",{L"居中",L"拉伸",L"适应",L"填充",L"平铺"});
@@ -1041,8 +1145,6 @@ struct ProductUi::State {
                     UpdateRelocationUi(relocateBusy ? nullptr : L"若新位置为空，将迁移现有壁纸库；若已有完整图库，将换用该图库。");
                 }
             } else if (opened) {
-                gallerySize = snapshot.config.currentWall.size < SWN_SIZE_COUNT
-                    ? static_cast<int>(snapshot.config.currentWall.size) : 0;
                 UpdateGalleryUi(true);
                 if (!snapshot.records.empty() && !galleryOperation && !relocateBusy &&
                     (!snapshot.hasSelected || RecordDate(snapshot.selected) != RecordDate(snapshot.records.front())))
@@ -1068,10 +1170,19 @@ struct ProductUi::State {
             if(trayInstalled)ShowWindow(ui->MainWindow(),SW_HIDE);else BeginClose();return;
         }
         if (event.window == L"_启动窗口") {
+            if(event.control==L"外观模式"&&event.notification==CBN_SELCHANGE&&event.selection>=0) {
+                ui->SetAppearance(ui->SupportsSystemAppearance()?event.selection:event.selection+1);
+                SaveUiPreferences();
+                return;
+            }
             if (event.control == L"组合框EX1" && event.notification==CBN_SELCHANGE&&event.selection >= 0) SubmitAction(Request(ProductAction::ChangeFrequency, event.selection));
             else if (event.control == L"组合框EX2" && event.notification==CBN_SELCHANGE&&event.selection >= 0) SubmitAction(Request(ProductAction::ChangeSize, event.selection));
             else if(event.notification==WM_CONTEXTMENU&&event.control==L"图片框EX1")ShowTrayMenu();
             else if(event.notification!=BN_CLICKED)return;
+            else if(event.control==L"模式说明")MessageBoxW(ui->MainWindow(),
+                L"每日一图：自动检测必应今日美图，每日更新。\r\n\r\n壁纸库轮播：播放已经入库的壁纸，可设置间隔和乱序。\r\n\r\n收藏轮播：仅播放收藏壁纸，可设置更换间隔。\r\n\r\n七日壁纸模式暂未开放。",
+                L"运行模式说明",MB_OK|MB_ICONINFORMATION);
+            else if(event.control==L"图片框EX1")OpenViewer(snapshot.previewImage);
             else if (event.control == L"选择框EX1") SubmitAction(Request(ProductAction::AutoSave, event.checked ? 1 : 0));
             else if (event.control == L"选择框EX2") SubmitAction(Request(ProductAction::Random, event.checked ? 1 : 0));
             else if (event.control == L"选择框EX3") SubmitAction(Request(ProductAction::AutoRun, event.checked ? 1 : 0));
@@ -1155,6 +1266,17 @@ struct ProductUi::State {
 
     bool HandleAuxiliaryResult(TaskResult& result) {
         const int operation = result.operation;
+        if(operation==kThumbnailOperation) {
+            if(result.id!=thumbnailTask)return true;
+            thumbnailTask=0;
+            if(!closing&&result.payload) {
+                const auto batch=std::static_pointer_cast<ThumbnailBatch>(result.payload);
+                if(batch->generation==thumbnailGeneration)
+                    for(const auto& item:batch->images)ui->SetListItemImage(kGalleryWindow,L"列表框EX1",item.first,item.second);
+                RequestThumbnails();
+            }
+            return true;
+        }
         if (operation == kPreviewOperation) {
             if (result.id != previewTask) return true;
             previewTask = 0;
@@ -1162,6 +1284,9 @@ struct ProductUi::State {
                 cachedPreview = requestedPreview;
                 previewBytes = std::move(result.bytes);
                 previewError = result.code ? result.message : L"";
+                const int index=workbench.DisplayIndex(requestedPreview.date);
+                if(index>=0&&!previewBytes.empty())
+                    ui->SetListItemImage(kGalleryWindow,L"列表框EX1",static_cast<size_t>(index),previewBytes);
                 UpdateGalleryUi();
             }
             return true;
@@ -1200,7 +1325,7 @@ struct ProductUi::State {
 
         const auto* title = operation == kSourceOperation ? L"壁纸来源" : operation == kRelocateOperation ? L"库迁移" :
                             operation == kExportOperation ? L"导出壁纸" : L"壁纸库管理";
-        const HWND owner = DialogOwner(ui->MainWindow());
+        const HWND owner = DialogOwner(ui->WindowHandle(kGalleryWindow));
         if (result.code != 0)
             MessageBoxW(owner, result.message.c_str(), title, MB_OK | MB_ICONERROR);
         else if (operation == kExportOperation)
@@ -1213,7 +1338,7 @@ struct ProductUi::State {
         constexpr UINT kUiTestViewerMode = WM_APP + 0x52;
         if (options.uiTest && message == kUiTestSelectTab) {
             const int page = static_cast<int>(wParam);
-            if (page >= 0 && page < 5) ui->SetSelection(kMainWindow, L"选择夹EX1", page);
+            if (page >= 0 && page < 3) ui->SetSelection(kMainWindow, L"选择夹EX1", page);
             return true;
         }
         if(options.uiTest&&message==kUiTestViewerMode) {
@@ -1304,12 +1429,27 @@ struct ProductUi::State {
         if (!ui->CreateMain()) { CoUninitialize(); throw std::runtime_error("ReplicaUi::CreateMain failed"); }
         ui->SetMessageHandler([this](UINT m, WPARAM w, LPARAM l) { return HandleMessage(m, w, l); });
         ui->SetCloseGuard([this](const std::wstring& name) {
+            if(name==kGalleryWindow) {
+                if(themeBusy)return false;
+                ui->Close(kThemeWindow);
+                return true;
+            }
             if(name!=kThemeWindow)return true;
             if(themeBusy)return false;
             ui->Close(kThemeSelectionWindow);
             return true;
         });
         trayIcon=originalIcon;taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");AddTray();
+        ui->SetItems(kMainWindow,L"外观模式",ui->SupportsSystemAppearance()
+            ?std::vector<std::wstring>{L"跟随系统",L"浅色",L"深色"}
+            :std::vector<std::wstring>{L"浅色",L"深色"});
+        const auto preferences=UiPreferencesPath();
+        int appearance=GetPrivateProfileIntW(L"Appearance",L"Mode",ui->SupportsSystemAppearance()?0:1,preferences.c_str());
+        if(appearance<0||appearance>2||(!ui->SupportsSystemAppearance()&&appearance==0))appearance=1;
+        workbench.previewSize=GetPrivateProfileIntW(L"Gallery",L"PreviewSize",SWN_1920x1080,preferences.c_str());
+        if(workbench.previewSize<0||workbench.previewSize>=SWN_SIZE_COUNT)workbench.previewSize=SWN_1920x1080;
+        ui->SetSelection(kMainWindow,L"外观模式",ui->SupportsSystemAppearance()?appearance:appearance-1);
+        ui->SetAppearance(appearance);
         ui->SetItems(kMainWindow,L"组合框EX1",{L"5分钟",L"10分钟",L"20分钟",L"30分钟",L"45分钟",L"1小时",L"2小时",L"3小时",L"5小时",L"8小时"});
         ui->SetItems(kMainWindow,L"组合框EX2",kSizes);
         ui->SetEnabled(kMainWindow,L"单选框EX4",false);

@@ -1,0 +1,10 @@
+#pragma code_page(65001)
+"IMG/icon" RCDATA "payload/082def294e64cb9feba5e840619fd7e96ca2201cd543e40a27eea3b9dd258781.bin"
+"IMG/nopic" RCDATA "payload/db9feb8521bdb5aec4745cca7b3c5c75dc0b720cc23fe30c6e9d3f0d1b80722b.bin"
+"XML/_启动窗口/图片框EX5/扩展属性数据/0" RCDATA "payload/a212a088720d15af9cc81e3f0a552f2835ef98238ff2db2b4612315e0148c152.bin"
+"XML/_启动窗口/图片框EX4/扩展属性数据/0" RCDATA "payload/d84ecc1ab89a7a591341cc25d1f8739110e3ce07ba3c8a49aad517de5f502e13.bin"
+"XML/_启动窗口/图片框EX3/扩展属性数据/0" RCDATA "payload/7d21ff620b9958edc3f58477773abf9188c737bc70f4e58ee9b827ac45d3e889.bin"
+"XML/_启动窗口/图片框EX2/扩展属性数据/0" RCDATA "payload/a5991ab076bdf916f167bee28aaa0554160597acabc700ccc4df829694469fca.bin"
+"XML/iOS窗口/图片框EX1/扩展属性数据/0" RCDATA "payload/58252a90ed0f5d1df007a452e2ae355f0a147f34977ba8d754203db82944e96d.bin"
+"XML/iOS窗口/图片框EX2/扩展属性数据/0" RCDATA "payload/7a895f827c2eda33df2caa5d2da7449e76fdc20fa624d1666cb29c1b01bcbd86.bin"
+"XML/大图窗口/超级按钮EX1/扩展属性数据/0" RCDATA "payload/9ed06984d1715afd0de6b31b598f8de21d70e6ecbb794004d99b56b187b8a7b8.bin"

@@ -21,6 +21,7 @@
 #pragma comment(lib,"ole32.lib")
 #pragma comment(lib,"user32.lib")
 
+#ifndef STOUTWALL_STATIC_LINK
 #pragma comment(linker, "/EXPORT:SWP_LoadConfig=_SWP_LoadConfig@8")
 #pragma comment(linker, "/EXPORT:SWP_SaveConfig=_SWP_SaveConfig@8")
 #pragma comment(linker, "/EXPORT:SWP_GetChangeInterval=_SWP_GetChangeInterval@16")
@@ -30,6 +31,7 @@
 #pragma comment(linker, "/EXPORT:SWP_ExtractArchive=_SWP_ExtractArchive@24")
 #pragma comment(linker, "/EXPORT:SWP_CreateArchive=_SWP_CreateArchive@24")
 #pragma comment(linker, "/EXPORT:SWP_ExportTheme=_SWP_ExportTheme@28")
+#endif
 namespace fs=std::filesystem;
 namespace {
 DWORD LastError(){DWORD e=GetLastError();return e?e:ERROR_GEN_FAILURE;}

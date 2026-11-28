@@ -11,11 +11,13 @@
 #include <new>
 #pragma comment(lib, "winhttp.lib")
 
+#ifndef STOUTWALL_STATIC_LINK
 #pragma comment(linker, "/EXPORT:SWN_FetchLatest=_SWN_FetchLatest@16")
 #pragma comment(linker, "/EXPORT:SWN_ParseMetadata=_SWN_ParseMetadata@16")
 #pragma comment(linker, "/EXPORT:SWN_BuildImageUrl=_SWN_BuildImageUrl@16")
 #pragma comment(linker, "/EXPORT:SWN_DownloadImage=_SWN_DownloadImage@24")
 #pragma comment(linker, "/EXPORT:SWN_ValidateImage=_SWN_ValidateImage@12")
+#endif
 #ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
 #define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
 #endif

@@ -1,8 +1,6 @@
 #pragma once
 
-#include "ProductBackend.hpp"
-#include "ReplicaUi.hpp"
-#include "TaskRunner.hpp"
+#include <windows.h>
 #include <memory>
 #include <string>
 

@@ -1,7 +1,9 @@
 #pragma once
 #include <windows.h>
 #include <stdint.h>
-#ifdef SW_LIBRARY_BUILD
+#if defined(STOUTWALL_STATIC_LINK)
+#define SWL_API extern "C"
+#elif defined(SW_LIBRARY_BUILD)
 #define SWL_API extern "C" __declspec(dllexport)
 #else
 #define SWL_API extern "C" __declspec(dllimport)

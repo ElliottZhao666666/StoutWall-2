@@ -4,7 +4,9 @@
 #endif
 #include <windows.h>
 
-#if defined(SWP_BUILD)
+#if defined(STOUTWALL_STATIC_LINK)
+#define SWP_API
+#elif defined(SWP_BUILD)
 #define SWP_API __declspec(dllexport)
 #else
 #define SWP_API __declspec(dllimport)

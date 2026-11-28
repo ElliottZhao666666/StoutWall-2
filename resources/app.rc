@@ -1,6 +1,9 @@
 ﻿#pragma code_page(65001)
 #include <winver.h>
 #include "../src/Version.h"
+#ifndef STOUTWALL_DLL_VERSION
+1 ICON "app.ico"
+#endif
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION STOUTWALL_VERSION_NUMBER
  PRODUCTVERSION STOUTWALL_VERSION_NUMBER

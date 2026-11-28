@@ -13,6 +13,7 @@
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
+#include <set>
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -85,6 +86,48 @@ namespace stoutwall {
 struct PreviewProbe {
     static void Check(ReplicaUi& ui, const std::vector<unsigned char>& original,
                       const std::vector<unsigned char>& preview) {
+#ifndef STOUTWALL_PREVIEW_BASELINE
+        // Inspect the real renderer's native controls without input injection.
+        Need(ui.CreateProductWindow(L"_启动窗口")!=nullptr,"cannot create hidden main window");
+        Need(ui.CreateProductWindow(L"库管理窗口")!=nullptr,"cannot create hidden workbench");
+        const HWND gallery=ui.WindowHandle(L"库管理窗口");
+        Need(ui.CreateProductWindow(L"主题包窗口",gallery)!=nullptr,"cannot create embedded theme panel");
+        for(const auto* name:{L"iOS窗口",L"壁纸来源窗口",L"库迁移窗口"})
+            Need(ui.CreateProductWindow(name)!=nullptr,"auxiliary window creation failed");
+        for(const auto& entry:ui.windows_) {
+            std::set<std::wstring> names;
+            for(const auto& item:entry.second.children) {
+                Need(names.insert(item.name).second,"duplicate control name");
+                if(!item.visible)continue;
+                RECT rect{},parent{};GetWindowRect(item.hwnd,&rect);
+                MapWindowPoints(nullptr,GetParent(item.hwnd),reinterpret_cast<POINT*>(&rect),2);
+                GetClientRect(GetParent(item.hwnd),&parent);
+                if(rect.left<0||rect.top<0||rect.right>parent.right+1||rect.bottom>parent.bottom+1) {
+                    std::wcerr<<L"Out of bounds: "<<entry.first<<L"/"<<item.name<<L"\n";
+                    Need(false,"visible control outside its parent");
+                }
+            }
+        }
+        const auto* tabs=ui.Find(nullptr,L"_启动窗口",L"选择夹EX1");
+        Need(tabs&&TabCtrl_GetItemCount(tabs->hwnd)==3,"main navigation must have three pages");
+        const auto* split=ui.Find(nullptr,L"库管理窗口",L"多功能按钮EX1");
+        Need(split&&(GetWindowLongPtrW(split->hwnd,GWL_STYLE)&BS_TYPEMASK)==BS_SPLITBUTTON,
+             "export control is not a native split button");
+        Need(ui.Find(nullptr,L"库管理窗口",L"按钮EX4")!=nullptr,"theme navigation is missing");
+        Need(GetParent(ui.WindowHandle(L"主题包窗口"))==gallery,"theme panel is not inside the workbench");
+        ui.SetItems(L"库管理窗口",L"列表框EX1",{L"A",L"B"});
+        ui.SetSelection(L"库管理窗口",L"列表框EX1",1);
+        Need(ui.Selection(L"库管理窗口",L"列表框EX1")==1,"native grid selection failed");
+        Need(ui.SetListItemImage(L"库管理窗口",L"列表框EX1",0,{}),"missing thumbnail was not cached");
+        Need(ui.SetListItemImage(L"库管理窗口",L"列表框EX1",1,preview),"thumbnail decode failed");
+        auto* grid=ui.Find(nullptr,L"库管理窗口",L"列表框EX1");
+        Need(grid&&grid->tileImages.size()==2,"thumbnail cache size mismatch");
+        for(const auto& image:grid->tileImages)
+            Need(image.second.width<=1920&&image.second.height<=1080,"thumbnail exceeds preview bounds");
+        ui.SetAppearance(2);Need(ui.AppearanceMode()==2,"dark appearance failed");
+        ui.SetAppearance(1);Need(ui.AppearanceMode()==1,"light appearance failed");
+        std::cout<<"PASS: native UI geometry, unique controls, three pages, split export, embedded theme, grid and appearances\n";
+#endif
         for (const auto* window : {L"_启动窗口", L"库管理窗口"}) {
             Need(ui.CreateProductWindow(window) != nullptr, "cannot create hidden preview window");
             Need(ui.SetImage(window, L"图片框EX1", preview), "window preview decode failed");

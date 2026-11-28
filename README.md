@@ -2,7 +2,9 @@
 
 当前内部测试版：**1.1.9.2611B**（PE 数值版本 `1.1.9.2611`）。4K 壁纸的界面预览使用 1920×1080 图像；桌面应用、保存与导出仍保留选定原尺寸。
 
-本轮优化、性能测量与测试范围见 [4K 预览性能记录](docs/PERFORMANCE_20261126.md)；后续正式界面的三套布局与实施建议见 [界面设计方案](docs/UI_DESIGN_OPTIONS.md)。
+2026-11-28 的正式界面已采用「今日壁纸 / 设置 / 关于」单窗结构，并将壁纸浏览、原图导出和主题导出集中到独立的壁纸库工作台。实机截图、控件与功能映射、本机测试和交付说明见 [全要素界面设计报告](docs/ui-review-20261128/README.md)，可直接打开同目录的 index.html 浏览大图。
+
+此前的性能记录见 [4K 预览性能记录](docs/PERFORMANCE_20261126.md)；原始方案比较保留在 [界面设计方案](docs/UI_DESIGN_OPTIONS.md)。
 
 当前仓库承接胖哥每日壁纸的第二次重制。2026-11-26 起，`main` 使用本工程作为开发主线，旧重构目录已从主线移除。
 
@@ -26,7 +28,7 @@
 
 运行 `cmd /c build.cmd`，产物位于 `build/win32`。需要 Windows、Git、Visual Studio C++ x86 构建工具和 Windows SDK。默认工具链路径为 `C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvarsall.bat`，MSVC 14.44、SDK 10.0.26100.0；其他安装可设置 `STOUTWALL_VSBUILD`、`STOUTWALL_MSVC_VERSION` 和 `STOUTWALL_SDK`。
 
-首次构建会下载 7-Zip 25.01 的固定源码修订，静态编译独立的 7za.exe，并随产物保存许可文件。主程序和 C++ DLL 使用 /MT，assets.dll 只含资源。原版运行依赖及校验值见 [依赖说明](dependencies/README.md)。
+首次构建会下载 7-Zip 25.01 的固定源码修订，静态编译独立的 7za.exe，并随产物保存许可文件。自研 network / platform / library、界面和后端分别构建为静态库后链接到主程序，全部使用 /MT；不再分发三个自研代码 DLL。assets.dll 只保留界面实际使用的旧图标、二维码等资源；旧数据库兼容层 gallery.dll 保留，以维持现有图库格式和业务行为。此结构不是零 DLL 分发。原版运行依赖及校验值见 [依赖说明](dependencies/README.md)。
 
 无参数启动使用 `%LOCALAPPDATA%\StoutWallReBuild2` 下的专用配置和图库，并按设置更新桌面。开机自启只保留界面偏好。验收必须使用 `--test-mode` 或 `--ui-test`，该模式不会应用桌面壁纸，配置可用 `--data-root` 和 `--config` 指向独立测试目录。本机实测和 Win7 SP1 待测项见 [验收记录](docs/ACCEPTANCE.md)。
 
